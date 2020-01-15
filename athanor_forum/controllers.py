@@ -15,22 +15,26 @@ class AthanorForumController(AthanorGlobalScript):
         from django.conf import settings
 
         try:
-            self.ndb.category_typeclass = class_from_module(settings.FORUM_CATEGORY_TYPECLASS,
-                                                            defaultpaths=settings.TYPECLASS_PATHS)
+            category_typeclass = getattr(settings, 'FORUM_CATEGORY_TYPECLASS',
+                                         "athanor_forum.gamedb.AthanorForumCategory")
+            self.ndb.category_typeclass = class_from_module(category_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
+
         except Exception:
             log_trace()
             self.ndb.category_typeclass = AthanorForumCategory
 
         try:
-            self.ndb.board_typeclass = class_from_module(settings.FORUM_BOARD_TYPECLASS,
-                                                         defaultpaths=settings.TYPECLASS_PATHS)
+            board_typeclass = getattr(settings, "FORUM_BOARD_TYPECLASS", "athanor_forum.gamedb.AthanorForumBoard")
+            self.ndb.board_typeclass = class_from_module(board_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
+
         except Exception:
             log_trace()
             self.ndb.board_typeclass = AthanorForumBoard
 
         try:
-            self.ndb.thread_typeclass = class_from_module(settings.FORUM_THREAD_TYPECLASS,
-                                                          defaultpaths=settings.TYPECLASS_PATHS)
+            thread_typeclass = getattr(settings, "FORUM_THREAD_TYPECLASS", "athanor_forum.gamedb.AthanorForumThread")
+            self.ndb.thread_typeclass = class_from_module(thread_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
+
         except Exception:
             log_trace()
             self.ndb.thread_typeclass = AthanorForumThread
