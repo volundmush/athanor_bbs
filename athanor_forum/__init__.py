@@ -1,4 +1,4 @@
-def _init(settings):
+def load(settings):
     settings.INSTALLED_APPS.extend(["athanor_forum"])
     settings.GLOBAL_SCRIPTS['forum'] = {
         'typeclass': 'athanor_forum.controllers.AthanorForumController',
