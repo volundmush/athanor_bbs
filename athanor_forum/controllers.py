@@ -2,42 +2,42 @@ from evennia.utils.logger import log_trace
 from evennia.utils.utils import class_from_module
 
 from athanor.utils.text import partial_match
-from athanor.gamedb.scripts import AthanorGlobalScript
+from athanor.controllers.base import AthanorController
 
 from athanor_forum.models import ForumCategoryBridge, ForumBoardBridge, ForumThreadBridge, ForumPost, ForumThreadRead
 from athanor_forum.gamedb import AthanorForumCategory, AthanorForumBoard, AthanorForumThread
 
 
-class AthanorForumController(AthanorGlobalScript):
+class AthanorForumController(AthanorController):
     system_name = 'FORUM'
 
-    def at_start(self):
+    def do_load(self):
         from django.conf import settings
 
         try:
             category_typeclass = getattr(settings, 'FORUM_CATEGORY_TYPECLASS',
                                          "athanor_forum.gamedb.AthanorForumCategory")
-            self.ndb.category_typeclass = class_from_module(category_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
+            self.category_typeclass = class_from_module(category_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
 
         except Exception:
             log_trace()
-            self.ndb.category_typeclass = AthanorForumCategory
+            self.category_typeclass = AthanorForumCategory
 
         try:
             board_typeclass = getattr(settings, "FORUM_BOARD_TYPECLASS", "athanor_forum.gamedb.AthanorForumBoard")
-            self.ndb.board_typeclass = class_from_module(board_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
+            self.board_typeclass = class_from_module(board_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
 
         except Exception:
             log_trace()
-            self.ndb.board_typeclass = AthanorForumBoard
+            self.board_typeclass = AthanorForumBoard
 
         try:
             thread_typeclass = getattr(settings, "FORUM_THREAD_TYPECLASS", "athanor_forum.gamedb.AthanorForumThread")
-            self.ndb.thread_typeclass = class_from_module(thread_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
+            self.thread_typeclass = class_from_module(thread_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
 
         except Exception:
             log_trace()
-            self.ndb.thread_typeclass = AthanorForumThread
+            self.thread_typeclass = AthanorForumThread
 
     def categories(self):
         return AthanorForumCategory.objects.filter_family().order_by('db_key')
@@ -49,7 +49,7 @@ class AthanorForumController(AthanorGlobalScript):
         if not self.access(session, 'admin'):
             raise ValueError("Permission denied!")
 
-        new_category = self.ndb.category_typeclass.create_forum_category(key=name, abbr=abbr)
+        new_category = self.category_typeclass.create_forum_category(key=name, abbr=abbr)
         announce = f"Created BBS Category: {abbr} - {name}"
         self.alert(announce, enactor=session)
         self.msg_target(announce, session)
@@ -139,7 +139,7 @@ class AthanorForumController(AthanorGlobalScript):
         category = self.find_category(session, category)
         if not category.access(session, 'create'):
             raise ValueError("Permission denied!")
-        typeclass = self.ndb.board_typeclass
+        typeclass = self.board_typeclass
         new_board = typeclass.create_forum_board(key=name, order=order, category=category)
         announce = f"BBS Board Created: ({category}) - {new_board.prefix_order}: {new_board.key}"
         self.alert(announce, enactor=session)
@@ -188,7 +188,7 @@ class AthanorForumController(AthanorGlobalScript):
 
     def create_thread(self, session, board=None, subject=None, text=None, announce=True, date=None, no_post=False):
         board = self.find_board(session, board)
-        new_thread = self.ndb.thread_typeclass.create_forum_thread(key=subject, text=text, owner=session.full_stub, board=board, date=date)
+        new_thread = self.thread_typeclass.create_forum_thread(key=subject, text=text, owner=session.full_stub, board=board, date=date)
         if not no_post:
             new_post = self.create_post(session, board=board, thread=new_thread, subject=subject, text=text,
                                         announce=False, date=date)
