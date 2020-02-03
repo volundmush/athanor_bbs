@@ -8,18 +8,55 @@ from evennia.utils.ansi import ANSIString
 from athanor.utils.online import puppets as online_puppets
 from athanor.utils.time import utcnow
 from athanor.gamedb.scripts import AthanorOptionScript
+from athanor.gamedb.base import HasOps
 
-from athanor_forum.models import ForumCategoryBridge, ForumBoardBridge, ForumThreadBridge, ForumPost, ForumThreadRead
+from athanor_forum.models import ForumCategoryBridge, ForumBoardBridge, ForumPost, ForumPostRead
+from athanor_forum import messages as fmsg
 
 
-class AthanorForumCategory(AthanorOptionScript):
+class HasBoardOps(HasOps):
+    grant_msg = fmsg.Grant
+    revoke_msg = fmsg.Revoke
+    ban_msg = fmsg.Ban
+    unban_msg = fmsg.Unban
+
+
+class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
     # The Regex to use for Forum Category names.
     re_name = re.compile(r"^[a-zA-Z]{0,3}$")
 
     # The regex to use for Forum Category abbreviations.
     re_abbr = re.compile(r"^[a-zA-Z]{0,3}$")
 
-    lockstring = "see:all();create:perm(Admin);delete:perm(Admin);admin:perm(Admin)"
+    lockstring = "see:all();create:pperm(Admin);delete:pperm(Admin);control:pperm(Admin)"
+    operate_operation = "forum_category_operate"
+    moderate_operation = "forum_category_moderate"
+    use_operation = "forum_category_use"
+    examine_type = 'forum_category'
+    examine_caller_type = 'account'
+
+    def parent_moderator(self, user):
+        return user.lock_check(f"oper({self.moderate_operation})") or self.parent_operator(user)
+
+    def parent_operator(self, user):
+        return user.lock_check(f"oper({self.operate_operation})")
+
+    def parent_user(self, user):
+        return user.lock_check(f"oper({self.use_operation})") or self.parent_moderator(user)
+
+    @property
+    def bridge(self):
+        return self.forum_category_bridge
+
+    @property
+    def boards(self):
+        return [board.db_script for board in self.bridge.boards.all().order_by('db_order')]
+
+    def is_visible(self, user):
+        for board in self.boards:
+            if board.is_user(user):
+                return True
+        return False
 
     def create_bridge(self, key, clean_key, abbr, clean_abbr):
         if hasattr(self, 'forum_category_bridge'):
@@ -53,13 +90,32 @@ class AthanorForumCategory(AthanorOptionScript):
             raise ValueError(errors)
         return script
 
+    def rename(self, key):
+        pass
 
-class AthanorForumBoard(AthanorOptionScript):
+    def change_prefix(self, new_prefix):
+        pass
+
+
+class AthanorForumBoard(HasBoardOps, AthanorOptionScript):
     re_name = re.compile(r"(?i)^([A-Z]|[0-9]|\.|-|')+( ([A-Z]|[0-9]|\.|-|')+)*$")
-    lockstring = "read:all();post:all();admin:perm(Admin)"
+    lockstring = "read:all();post:all();control:pperm(Admin)"
+    operate_operation = "forum_board_operate"
+    moderate_operation = "forum_board_moderate"
+    use_operation = "forum_board_use"
+    examine_type = 'forum_category'
+    examine_caller_type = 'account'
 
     def setup_locks(self):
         self.locks.add(self.lockstring)
+
+    @property
+    def bridge(self):
+        return self.forum_board_bridge
+    
+    @property
+    def parent(self):
+        return self.bridge.db_category.db_script
 
     def create_bridge(self, category, key, clean_key, order):
         if hasattr(self, 'forum_board_bridge'):
@@ -95,8 +151,8 @@ class AthanorForumBoard(AthanorOptionScript):
         return f'{bridge.category.db_abbr}{bridge.db_order}'
 
     @property
-    def main_threads(self):
-        return self.forum_board_bridge.threads.filter(parent=None)
+    def main_posts(self):
+        return self.forum_board_bridge.posts.filter(parent=None)
 
     def character_join(self, character):
         self.forum_board_bridge.ignore_list.remove(character)
@@ -106,7 +162,7 @@ class AthanorForumBoard(AthanorOptionScript):
 
     def parse_threadnums(self, account, check=None):
         if not check:
-            raise ValueError("No threads entered to check.")
+            raise ValueError("No posts entered to check.")
         fullnums = []
         for arg in check.split(','):
             arg = arg.strip()
@@ -121,10 +177,10 @@ class AthanorForumBoard(AthanorOptionScript):
                 fullnums.append(int(arg))
             if re.match(r"^U$", arg.upper()):
                 fullnums += self.unread_posts(account).values_list('db_order', flat=True)
-        threads = self.threads.filter(db_order__in=fullnums).order_by('db_order')
-        if not threads:
-            raise ValueError("Threads not found!")
-        return threads
+        posts = self.posts.filter(db_order__in=fullnums).order_by('db_order')
+        if not posts:
+            raise ValueError("posts not found!")
+        return posts
 
     def check_permission(self, checker=None, mode="read", checkadmin=True):
         if checker.locks.check_lockstring(checker, 'dummy:perm(Admin)'):
@@ -136,26 +192,19 @@ class AthanorForumBoard(AthanorOptionScript):
         else:
             return False
 
-    def unread_threads(self, account):
-        return self.forum_board_bridge.threads.exclude(read__account=account, db_date_modified__lte=F('read__date_read')).order_by(
+    def unread_posts(self, account):
+        return self.forum_board_bridge.posts.exclude(read__account=account, db_date_modified__lte=F('read__date_read')).order_by(
             'db_order')
 
     def display_permissions(self, looker=None):
         if not looker:
             return " "
         acc = ""
-        if self.check_permission(checker=looker, mode="read", checkadmin=False):
-            acc += "R"
-        else:
-            acc += " "
-        if self.check_permission(checker=looker, mode="post", checkadmin=False):
-            acc += "P"
-        else:
-            acc += " "
-        if self.check_permission(checker=looker, mode="admin", checkadmin=False):
-            acc += "A"
-        else:
-            acc += " "
+        for perm in (('read', 'R'), ('post', 'P'), ('admin', 'A')):
+            if self.check_permission(checker=looker, mode=perm[0], checkadmin=False):
+                acc += perm[1]
+            else:
+                acc += " "
         return acc
 
     def listeners(self):
@@ -163,12 +212,12 @@ class AthanorForumBoard(AthanorOptionScript):
                 and char not in self.ignore_list.all()]
 
     def squish_posts(self):
-        for count, post in enumerate(self.posts.order_by('db_date_created')):
+        for count, post in enumerate(self.posts.order_by('date_created')):
             if post.order != count + 1:
                 post.order = count + 1
 
     def last_post(self):
-        post = self.posts.order_by('db_date_created').first()
+        post = self.posts.order_by('date_created').first()
         if post:
             return post
         return None
@@ -191,40 +240,3 @@ class AthanorForumBoard(AthanorOptionScript):
         except LockException as e:
             raise ValueError(str(e))
         return new_locks
-
-
-class AthanorForumThread(AthanorOptionScript):
-    re_name = re.compile(r"(?i)^([A-Z]|[0-9]|\.|-|')+( ([A-Z]|[0-9]|\.|-|')+)*$")
-
-    def create_bridge(self, board, key, clean_key, order, account, obj, date_created, date_modified):
-        if hasattr(self, 'forum_category_bridge'):
-            return
-        if not date_created:
-            date_created = utcnow()
-        if not date_modified:
-            date_modified = utcnow()
-        ForumThreadBridge.objects.create(db_script=self, db_name=clean_key, db_order=order, db_object=obj, db_cname=key,
-                                         db_board=board.forum_board_bridge,  db_iname=clean_key.lower(),
-                                         db_date_created=date_created, db_account=account,
-                                         db_date_modified=date_modified)
-
-    @classmethod
-    def create_forum_thread(cls, board, key, order, account, obj, date_created, date_modified, **kwargs):
-        key = ANSIString(key)
-        clean_key = str(key.clean())
-        if '|' in clean_key:
-            raise ValueError("Malformed ANSI in Forum Thread Name.")
-        if not cls.re_name.match(clean_key):
-            raise ValueError("Forum Thread Names must <qualifier>")
-        if ForumThreadBridge.objects.filter(db_board=board.forum_board_bridge).filter(
-                Q(db_iname=clean_key.lower()) | Q(db_order=order)).count():
-            raise ValueError("Name or Order conflicts with another Forum Thread on this Board.")
-        script, errors = cls.create(clean_key, persistent=True, **kwargs)
-        if script:
-            script.create_bridge(board, key.raw(), clean_key, order, account, obj, date_created, date_modified)
-        else:
-            raise ValueError(errors)
-        return script
-
-    def __str__(self):
-        return self.key

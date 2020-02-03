@@ -4,58 +4,54 @@ from evennia.utils.utils import class_from_module
 from athanor.utils.text import partial_match
 from athanor.controllers.base import AthanorController
 
-from athanor_forum.models import ForumCategoryBridge, ForumBoardBridge, ForumThreadBridge, ForumPost, ForumThreadRead
-from athanor_forum.gamedb import AthanorForumCategory, AthanorForumBoard, AthanorForumThread
+from athanor_forum.models import ForumCategoryBridge, ForumBoardBridge, ForumPost, ForumPostRead
+from athanor_forum.gamedb import AthanorForumCategory, AthanorForumBoard, HasBoardOps
+from athanor_forum import messages as fmsg
 
-
-class AthanorForumController(AthanorController):
+class AthanorForumController(HasBoardOps, AthanorController):
     system_name = 'FORUM'
 
     def do_load(self):
         from django.conf import settings
 
         try:
-            category_typeclass = getattr(settings, 'FORUM_CATEGORY_TYPECLASS',
-                                         "athanor_forum.gamedb.AthanorForumCategory")
+            category_typeclass = settings.FORUM_CATEGORY_TYPECLASS
             self.category_typeclass = class_from_module(category_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
-
         except Exception:
             log_trace()
             self.category_typeclass = AthanorForumCategory
 
         try:
-            board_typeclass = getattr(settings, "FORUM_BOARD_TYPECLASS", "athanor_forum.gamedb.AthanorForumBoard")
+            board_typeclass = settings.FORUM_BOARD_TYPECLASS
             self.board_typeclass = class_from_module(board_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
-
         except Exception:
             log_trace()
             self.board_typeclass = AthanorForumBoard
 
-        try:
-            thread_typeclass = getattr(settings, "FORUM_THREAD_TYPECLASS", "athanor_forum.gamedb.AthanorForumThread")
-            self.thread_typeclass = class_from_module(thread_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
+    def parent_operator(self, user):
+        return user.lock_check(f"oper({self.operate_operation})")
 
-        except Exception:
-            log_trace()
-            self.thread_typeclass = AthanorForumThread
+    def parent_user(self, user):
+        return user.lock_check(f"oper({self.use_operation})") or self.parent_moderator(user)
 
     def categories(self):
-        return AthanorForumCategory.objects.filter_family().order_by('db_key')
+        return AthanorForumCategory.objects.filter_family().order_by('db_name')
 
-    def visible_categories(self, character):
-        return [cat for cat in self.categories() if cat.access(character, 'see')]
+    def visible_categories(self, user):
+        return [cat for cat in self.categories() if cat.is_visible(user)]
+
+    def get_user(self, session):
+        return session.get_puppet()
 
     def create_category(self, session, name, abbr=''):
-        if not self.access(session, 'admin'):
+        if not (enactor := self.get_user(session)) and self.parent_operator(enactor):
             raise ValueError("Permission denied!")
-
         new_category = self.category_typeclass.create_forum_category(key=name, abbr=abbr)
-        announce = f"Created BBS Category: {abbr} - {name}"
-        self.alert(announce, enactor=session)
-        self.msg_target(announce, session)
+        entities = {'enactor': enactor, 'target': new_category}
+        fmsg.Create(entities).send()
         return new_category
 
-    def find_category(self, session, category=None):
+    def find_category(self, user, category=None):
         if not category:
             raise ValueError("Must enter a category name!")
         if not (candidates := self.visible_categories(session)):
@@ -65,61 +61,56 @@ class AthanorForumController(AthanorController):
         return found
 
     def rename_category(self, session, category=None, new_name=None):
-        category = self.find_category(session, category)
-        if not category.access(session, 'admin'):
+        if not (enactor := self.get_user(session)) and self.parent_operator(enactor):
             raise ValueError("Permission denied!")
+        category = self.find_category(session, category)
         old_name = category.key
         old_abbr = category.abbr
         new_name = category.rename(new_name)
-        announce = f"BBS Category '{old_abbr} - {old_name}' renamed to: '{old_abbr} - {new_name}'"
-        self.alert(announce, enactor=session)
-        self.msg_target(announce, session)
+        entities = {'enactor': enactor, 'target': category}
+        fmsg.Rename(entities, old_name=old_name, old_abbr=old_abbr).send()
 
     def prefix_category(self, session, category=None, new_prefix=None):
-        category = self.find_category(session, category)
-        if not category.access(session, 'admin'):
+        if not (enactor := self.get_user(session)) and self.parent_operator(enactor):
             raise ValueError("Permission denied!")
+        category = self.find_category(session, category)
         old_abbr = category.abbr
         new_prefix = category.change_prefix(new_prefix)
-        announce = f"BBS Category '{old_abbr} - {category.key}' re-prefixed to: '{new_prefix} - {category.key}'"
-        self.alert(announce, enactor=session)
-        self.msg_target(announce, session)
+        entities = {'enactor': enactor, 'target': category}
+        fmsg.Rename(entities, old_name=old_name, old_abbr=old_abbr).send()
+
+    def rename_board(self, session, category, board, new_name):
+        category = self.find_category(session, category)
+        return category.rename_board(session, board, new_name)
 
     def delete_category(self, session, category, abbr=None):
+        if not (enactor := self.get_user(session)) and self.parent_operator(enactor):
+            raise ValueError("Permission denied!")
         category_found = self.find_category(session, category)
-        if not session.account.is_superuser:
-            raise ValueError("Permission denied! Superuser only!")
         if not category == category_found.key:
             raise ValueError("Names must be exact for verification.")
         if not abbr:
             raise ValueError("Must provide prefix for verification!")
         if not abbr == category_found.abbr:
             raise ValueError("Must provide exact prefix for verification!")
-        announce = f"|rDELETED|n BBS Category '{category_found.abbr} - {category_found.key}'"
-        self.alert(announce, enactor=session)
-        self.msg_target(announce, session)
+        entities = {'enactor': enactor, 'target': category_found}
+        fmsg.Delete(entities).send()
         category_found.delete()
 
     def lock_category(self, session, category, new_locks):
         category = self.find_category(session, category)
-        if not session.account.is_superuser:
-            raise ValueError("Permission denied! Superuser only!")
-        new_locks = category.change_locks(new_locks)
-        announce = f"BBS Category '{category.abbr} - {category.key}' lock changed to: {new_locks}"
-        self.alert(announce, enactor=session)
-        self.msg_target(announce, session)
+        return category.lock(session, new_locks)
+
+    def lock_board(self, session, category, board, new_locks):
+        category = self.find_category(session, category)
+        return category.lock_board(session, board, new_locks)
 
     def boards(self):
         return AthanorForumBoard.objects.filter_family().order_by('forum_board_bridge__db_category__db_name',
                                                                   'forum_board_bridge__db_order')
 
-    def usable_boards(self, character, mode='read', check_admin=True):
-        return [board for board in self.boards() if board.check_permission(character, mode=mode, checkadmin=check_admin)
-                and board.forum_board_bridge.category.db_script.access(character, 'see')]
-
-    def visible_boards(self, character, check_admin=True):
-        return [board for board in self.usable_boards(character, mode='read', check_admin=check_admin)
-                if board.forum_board_bridge.category.db_script.access(character, 'see')]
+    def visible_boards(self, user):
+        return [board for board in self.boards() if board.is_user(user)]
 
     def find_board(self, session, find_name=None, visible_only=True):
         if not find_name:

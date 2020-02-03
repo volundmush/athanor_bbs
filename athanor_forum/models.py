@@ -29,8 +29,6 @@ class ForumBoardBridge(SharedMemoryModel):
     db_iname = models.CharField(max_length=255, blank=False, null=False)
     db_cname = models.CharField(max_length=255, blank=False, null=False)
     db_order = models.PositiveIntegerField(default=0)
-    ignore_list = models.ManyToManyField('objects.ObjectDB')
-    db_mandatory = models.BooleanField(default=False)
 
     def __str__(self):
         return str(self.db_name)
@@ -41,24 +39,21 @@ class ForumBoardBridge(SharedMemoryModel):
         unique_together = (('db_category', 'db_order'), ('db_category', 'db_iname'))
 
 
-class ForumThreadBridge(SharedMemoryModel):
-    db_script = models.OneToOneField('scripts.ScriptDB', related_name='forum_thread_bridge', primary_key=True,
-                                     on_delete=models.CASCADE)
-    db_account = models.ForeignKey('accounts.AccountDB', related_name='+', null=True,
-                                   on_delete=models.SET_NULL)
-    db_object = models.ForeignKey('objects.ObjectDB', related_name='+', null=True, on_delete=models.SET_NULL)
-    db_name = models.CharField(max_length=255, blank=False, null=False)
-    db_iname = models.CharField(max_length=255, blank=False, null=False)
-    db_cname = models.CharField(max_length=255, blank=False, null=False)
-    db_date_created = models.DateTimeField(null=False)
-    db_board = models.ForeignKey(ForumBoardBridge, related_name='threads', on_delete=models.CASCADE)
-    db_date_modified = models.DateTimeField(null=False)
-    db_order = models.PositiveIntegerField(null=True)
+class ForumPost(models.Model):
+    account = models.ForeignKey('accounts.AccountDB', related_name='+', null=True, on_delete=models.SET_NULL)
+    object = models.ForeignKey('objects.ObjectDB', related_name='+', null=True, on_delete=models.SET_NULL)
+    date_created = models.DateTimeField(null=False)
+    board = models.ForeignKey(ForumBoardBridge, related_name='posts', on_delete=models.CASCADE)
+    name = models.CharField(max_length=255, blank=False, null=False)
+    cname = models.CharField(max_length=255, blank=False, null=False)
+    date_modified = models.DateTimeField(null=False)
+    order = models.PositiveIntegerField(null=False)
+    body = models.TextField(null=False, blank=False)
 
     class Meta:
-        verbose_name = 'Thread'
-        verbose_name_plural = 'Threads'
-        unique_together = (('db_board', 'db_order'), ('db_board', 'db_iname'))
+        verbose_name = 'Post'
+        verbose_name_plural = 'Posts'
+        unique_together = (('board', 'order'), )
 
     @classmethod
     def validate_key(cls, key_text, rename_from=None):
@@ -121,25 +116,10 @@ class ForumThreadBridge(SharedMemoryModel):
         acc_read.save()
 
 
-class ForumThreadRead(models.Model):
+class ForumPostRead(models.Model):
     account = models.ForeignKey('accounts.AccountDB', related_name='forum_read', on_delete=models.CASCADE)
-    thread = models.ForeignKey(ForumThreadBridge, related_name='read', on_delete=models.CASCADE)
+    thread = models.ForeignKey(ForumPost, related_name='read', on_delete=models.CASCADE)
     date_read = models.DateTimeField(null=True)
 
     class Meta:
         unique_together = (('account', 'thread'),)
-
-
-class ForumPost(models.Model):
-    account = models.ForeignKey('accounts.AccountDB', related_name='+', null=True, on_delete=models.SET_NULL)
-    object = models.ForeignKey('objects.ObjectDB', related_name='+', null=True, on_delete=models.SET_NULL)
-    date_created = models.DateTimeField(null=False)
-    thread = models.ForeignKey(ForumThreadBridge, related_name='posts', on_delete=models.CASCADE)
-    date_modified = models.DateTimeField(null=False)
-    order = models.PositiveIntegerField(null=True)
-    body = models.TextField(null=True, blank=True)
-
-    class Meta:
-        verbose_name = 'Post'
-        verbose_name_plural = 'Posts'
-        unique_together = (('thread', 'order'), )
