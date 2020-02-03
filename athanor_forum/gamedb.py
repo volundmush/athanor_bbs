@@ -5,6 +5,7 @@ from evennia.locks.lockhandler import LockException
 from evennia.utils.validatorfuncs import lock as validate_lock
 from evennia.utils.ansi import ANSIString
 
+import athanor
 from athanor.utils.online import puppets as online_puppets
 from athanor.utils.time import utcnow
 from athanor.gamedb.scripts import AthanorOptionScript
@@ -20,6 +21,8 @@ class HasBoardOps(HasOps):
     ban_msg = fmsg.Ban
     unban_msg = fmsg.Unban
 
+    def get_user(self, session):
+        return session.get_puppet()
 
 class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
     # The Regex to use for Forum Category names.
