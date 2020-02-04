@@ -3,6 +3,7 @@ from evennia.utils.utils import class_from_module
 
 from athanor.utils.text import partial_match
 from athanor.controllers.base import AthanorController
+from athanor.utils.time import utcnow
 
 from athanor_forum.models import ForumCategoryBridge, ForumBoardBridge, ForumPost, ForumPostRead
 from athanor_forum.gamedb import AthanorForumCategory, AthanorForumBoard, HasBoardOps
@@ -165,46 +166,44 @@ class AthanorForumController(HasBoardOps, AthanorController):
         entities = {'enactor': enactor, 'target': board}
         fmsg.Order(entities, old_order=old_order).send()
 
-    def create_post(self, session, board=None, subject=None, text=None, announce=True, date=None, no_post=False):
-        board = self.find_board(session, board)
+    def create_post(self, session, board=None, subject=None, text=None, announce=True, date=None):
+        if not (enactor := self.get_user(session)):
+            raise ValueError("Permission denied!")
+        board = self.find_board(enactor, board)
+        if not board.check_permission(enactor, mode='post'):
+            raise ValueError("Permission denied!")
+        if not subject:
+            raise ValueError("Posts must have a subject!")
+        if not text:
+            raise ValueError("Posts must have a text body!")
+        if not date:
+            date = utcnow()
         new_post = self.post_typeclass.create_forum_post(key=subject, text=text, owner=session.full_stub, board=board, date=date)
-        if not no_post:
-            new_post = self.create_post(session, board=board, post=new_post, subject=subject, text=text,
-                                        announce=False, date=date)
         if announce:
+            entities = {'enactor': enactor, 'target': board, 'post': new_post}
             pass  # do something!
         return new_post
 
     def rename_post(self, session, board=None, post=None, new_name=None):
-        board = self.find_board(session, board)
-        post = board.find_post(session, post)
+        if not (enactor := self.get_user(session)):
+            raise ValueError("Permission denied!")
+        board = self.find_board(enactor, board)
+        post = board.find_post(enactor, post)
 
     def delete_post(self, session, board=None, post=None, name_confirm=None):
-        board = self.find_board(session, board)
-        post = board.find_post(session, post)
+        if not (enactor := self.get_user(session)):
+            raise ValueError("Permission denied!")
+        board = self.find_board(enactor, board)
+        post = board.find_post(enactor, post)
 
-    def create_post(self, session, board=None, post=None, subject=None, text=None, announce=True, date=None):
-        board = self.find_board(session, board)
-        post = board.find_post(session, post)
-        new_post = post.create_post(text=text, owner=session, date=date)
-        if announce:
-            pass  # do something!
-        return new_post
-
-    def edit_post(self, session, board=None, post=None, post=None, seek_text=None, replace_text=None):
-        board = self.find_board(session, board)
-        post = board.find_post(session, post)
-        post = post.find_post(session, post)
-        if not post.can_edit(session):
+    def edit_post(self, session, board=None, post=None, seek_text=None, replace_text=None):
+        if not (enactor := self.get_user(session)):
+            raise ValueError("Permission denied!")
+        board = self.find_board(enactor, board)
+        post = board.find_post(enactor, post)
+        if not post.can_edit(enactor):
             raise ValueError("Permission denied.")
         post.edit_post(find=seek_text, replace=replace_text)
-        announce = f"Post edited!"
-        self.msg_target(announce, session)
-
-    def delete_post(self, session, board=None, post=None, post=None, verify_string=None):
-        board = self.find_board(session, board)
-        post = board.find_post(session, post)
-        post = post.find_post(session, post)
 
     def config_category(self, character, board=None, value=None):
         board = self.find_board(character, board)

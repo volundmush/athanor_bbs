@@ -63,34 +63,6 @@ class ForumPost(models.Model):
     def validate_order(cls, order_text, rename_from=None):
         return int(order_text)
 
-    @classmethod
-    def create(cls, *args, **kwargs):
-        board = kwargs.get('board', None)
-        if not isinstance(board, ForumThreadBridge):
-            raise ValueError("Posts must be linked to a board!")
-
-        owner = kwargs.get('owner', None)
-        key = kwargs.get('key', None)
-        key = cls.validate_key(key)
-
-        text = kwargs.get('text', None)
-        if not text:
-            raise ValueError("Post body is empty!")
-
-        order = kwargs.get('order', None)
-        if order:
-            order = cls.validate_order(order)
-        else:
-            last_post = board.last_post()
-            if last_post:
-                order = last_post.order + 1
-            else:
-                order = 1
-
-        new_post = cls(db_key=key, db_order=order, db_board=board, db_owner=owner, db_text=text)
-        new_post.save()
-        return new_post
-
     def __str__(self):
         return self.subject
 
