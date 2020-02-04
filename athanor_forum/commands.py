@@ -16,29 +16,30 @@ class ForumCommand(AthanorCommand):
     locks = 'cmd:all()'
 
     def switch_main_board_columns(self):
-        return self.styled_columns(f"{'ID':<6}{'Name':<31}{'Mem':<4}{'#Mess':>6}{'#Unrd':>6} Perm")
+        styling = self.caller.styler
+        return styling.styled_columns(f"{'ID':<6}{'Name':<31}{'Mem':<4}{'#Mess':>6}{'#Unrd':>6} Perm")
 
     def display_board_row(self, account, board):
-        bri = board.forum_board_bridge
-        if bri.mandatory:
+        bri = board.bridge
+        if board.db.mandatory:
             member = 'MND'
         else:
             member = 'No' if account in bri.ignore_list.all() else 'Yes'
         return f"{board.prefix_order:<6}{board.key:<31}{member:<4} {bri.threads.count():>5} {board.unread_threads(account).count():>5} {str(board.locks)}"
 
     def switch_main_read(self):
-        boards = evennia.GLOBAL_SCRIPTS.forum.visible_boards(self.caller, check_admin=True)
+        styling = self.caller.styler
+        boards = self.controllers.get('forum').visible_boards(self.caller, check_admin=True)
         message = list()
         message.append(self.styled_header('Forum Boards'))
         message.append(self.switch_main_board_columns())
-        message.append(self._blank_separator)
+        message.append(styling.blank_separator)
         this_cat = None
         for board in boards:
-            if this_cat != board.forum_board_bridge.category:
-                message.append(self.styled_separator(board.forum_board_bridge.category.cname))
-                this_cat = board.forum_board_bridge.category
+            if this_cat != (this_cat := board.category):
+                message.append(self.styled_separator(this_cat.cname))
             message.append(self.display_board_row(self.account, board))
-        message.append(self._blank_footer)
+        message.append(styling.blank_footer)
         self.msg('\n'.join(str(l) for l in message))
 
 
@@ -67,7 +68,7 @@ class CmdForumCategory(ForumCommand):
     """
     key = "@fcategory"
     aliases = ['+bbcat']
-    locks = 'cmd:perm(Admin) or perm(forum_admin)'
+    locks = 'cmd:oper(forum_category_admin)'
     switch_options = ('create', 'delete', 'rename', 'prefix', 'lock')
 
     def display_category_row(self, category):
@@ -77,30 +78,33 @@ class CmdForumCategory(ForumCommand):
         return f"{cabbr:<7}{cname:<27}{bri.boards.count():<7}{str(category.locks):<30}"
 
     def switch_main(self):
-        cats = evennia.GLOBAL_SCRIPTS.forum.visible_categories(self.caller)
+        cats = self.controllers.get('forum').visible_categories(self.caller)
         message = list()
         message.append(self.styled_header('Forum Categories'))
         message.append(self.styled_columns(f"{'Prefix':<7}{'Name':<27}{'Boards':<7}{'Locks':<30}"))
-        message.append(self._blank_separator)
+        message.append(self.blank_separator)
         for cat in cats:
             message.append(self.display_category_row(cat))
-        message.append(self._blank_footer)
+        message.append(self.blank_footer)
         self.msg('\n'.join(str(l) for l in message))
 
     def switch_create(self):
-        evennia.GLOBAL_SCRIPTS.forum.create_category(self.caller, self.lhs, self.rhs)
+        self.controllers.get('forum').create_category(self.caller, self.lhs, self.rhs)
 
     def switch_delete(self):
-        evennia.GLOBAL_SCRIPTS.forum.delete_category(self.caller, self.lhs, self.rhs)
+        self.controllers.get('forum').delete_category(self.caller, self.lhs, self.rhs)
 
     def switch_rename(self):
-        evennia.GLOBAL_SCRIPTS.forum.rename_category(self.caller, self.lhs, self.rhs)
+        self.controllers.get('forum').rename_category(self.caller, self.lhs, self.rhs)
 
     def switch_prefix(self):
-        evennia.GLOBAL_SCRIPTS.forum.prefix_category(self.caller, self.lhs, self.rhs)
+        self.controllers.get('forum').prefix_category(self.caller, self.lhs, self.rhs)
 
     def switch_lock(self):
-        evennia.GLOBAL_SCRIPTS.forum.lock_category(self.caller, self.lhs, self.rhs)
+        self.controllers.get('forum').lock_category(self.caller, self.lhs, self.rhs)
+
+    def switch_config(self):
+        self.controllers.get('forum').config_category(self.caller, self.lhs, self.rhs)
 
 
 class CmdForumAdmin(ForumCommand):
@@ -116,14 +120,14 @@ class CmdForumAdmin(ForumCommand):
         @fboard/rename <board>=<new name> - Renames a board.
         @fboard/order <board>=<new order> - Change a board's order.
         @fboard/lock <board>=<lock string> - Lock a board.
-        @fboard/mandatory <board>=<1 or 0> - Change whether a board is
+        @fboard/config <board>=<option>,<val> - Change whether a board is
             mandatory or not. mandatory forums with unread content
             insistently announce that connected accounts must read them
             and cannot be skipped with @fread/catchup.
 
     Securing Boards
         The default lock for a board is:
-            read:all();write:all();admin:perm(Admin) or perm(BBS_Admin)
+            read:all();write:all();admin:oper(forum_board_operate)
 
         Example lockstring for a staff announcement board:
             read:all();write:perm(Admin);admin:perm(Admin) or perm(BBS_Admin)
@@ -134,8 +138,9 @@ class CmdForumAdmin(ForumCommand):
     """
 
     key = "@fboard"
+    aliases = ['+bboard']
 
-    player_switches = ['create', 'delete', 'rename', 'order', 'lock', 'unlock', 'mandatory', 'join', 'leave']
+    player_switches = ['create', 'delete', 'rename', 'order', 'lock', 'unlock', 'config', 'join', 'leave']
 
     def switch_main(self):
         return self.switch_main_read()
@@ -144,73 +149,75 @@ class CmdForumAdmin(ForumCommand):
         if '/' not in self.rhs:
             raise ValueError("Usage: +bbadmin/create <category>=<board name>/<board order>")
         name, order = self.rhs.split('/', 1)
-        evennia.GLOBAL_SCRIPTS.forum.create_board(self.caller, category=self.lhs, name=name, order=order)
+        self.controllers.get('forum').create_board(self.caller, category=self.lhs, name=name, order=order)
 
     def switch_delete(self):
-        evennia.GLOBAL_SCRIPTS.forum.delete_board(self.caller, name=self.lhs, verify=self.rhs)
+        self.controllers.get('forum').delete_board(self.caller, name=self.lhs, verify=self.rhs)
 
     def switch_rename(self):
-        evennia.GLOBAL_SCRIPTS.forum.rename_board(self.caller, name=self.lhs, new_name=self.rhs)
+        self.controllers.get('forum').rename_board(self.caller, name=self.lhs, new_name=self.rhs)
 
-    def switch_mandatory(self):
-        evennia.GLOBAL_SCRIPTS.forum.mandatory_board(self.caller, name=self.lhs, new_name=self.rhs)
+    def switch_config(self):
+        self.controllers.get('forum').config_board(self.caller, name=self.lhs, new_name=self.rhs)
 
     def switch_order(self):
-        evennia.GLOBAL_SCRIPTS.forum.order_board(self.caller, name=self.rhs, order=self.lhs)
+        self.controllers.get('forum').order_board(self.caller, name=self.rhs, order=self.lhs)
 
     def switch_lock(self):
-        evennia.GLOBAL_SCRIPTS.forum.lock_board(self.caller, name=self.rhs, lock=self.lhs)
+        self.controllers.get('forum').lock_board(self.caller, name=self.rhs, lock=self.lhs)
 
     def switch_join(self):
-        board = evennia.GLOBAL_SCRIPTS.forum.find_board(self.caller, self.args, visible_only=False)
+        board = self.controllers.get('forum').find_board(self.caller, self.args, visible_only=False)
         board.ignore_list.remove(self.caller)
 
     def switch_leave(self):
-        board = evennia.GLOBAL_SCRIPTS.forum.find_board(self.caller, self.args)
+        board = self.controllers.get('forum').find_board(self.caller, self.args)
         if board.mandatory:
             raise ValueError("Cannot leave mandatory forum!")
         board.ignore_list.add(self.caller)
 
 
-class CmdForumThread(ForumCommand):
+class CmdForumPost(ForumCommand):
     """
     The BBS is a global, multi-threaded board with a rich set of features that grew
     from a rewrite of Myrddin's classical BBS.
 
     Writing Posts
-        @fthread <board>/<title>=<text> - Creates a new Thread on <board> called <title> with a starting post containing <text>.
-        @fthread/rename <board>/<thread>=<new title> - Changes the title/subject of a thread.
-        @fthread/move <board>/<thread>=<destination board> - Relocate a thread if you have permission.
-        @fthread/delete <board>/<thread> - Remove an ENTIRE thread and all posts under it. Requires permissions.
+        @fpost <board>/<title>=<text> - Creates a new post on <board> called <title> with the text <text>.
+        @fpost/rename <board>/<post>=<new title> - Changes the title/subject of a thread.
+        @fpost/move <board>/<post>=<destination board> - Relocate a thread if you have permission.
+        @fpost/delete <board>/<post> - Remove a post. Requires permissions.
+        @fpost/edit <board>/<post>=<before>^^^<after>
     """
     key = '@fthread'
-    switch_options = ('rename', 'move', 'delete')
+    aliases = ['+bbpost']
+    switch_options = ('rename', 'move', 'delete', 'edit')
 
     def switch_main(self):
         if '/' not in self.lhs:
             raise ValueError("Usage: +bbpost <board>/<subject>=<post text>")
         board, subject = self.lhs.split('/', 1)
-        evennia.GLOBAL_SCRIPTS.forum.create_post(self.caller, board=board, subject=subject, text=self.rhs)
+        self.controllers.get('forum').create_post(self.caller, board=board, subject=subject, text=self.rhs)
 
     def switch_rename(self):
         if '/' not in self.lhs or '^^^' not in self.rhs:
             raise ValueError("Usage: +bbpost/edit <board>/<post>=<search>^^^<replace>")
         board, post = self.lhs.split('/', 1)
         search, replace = self.rhs.split('^^^', 1)
-        evennia.GLOBAL_SCRIPTS.forum.edit_post(self.caller, board=board, post=post, seek_text=search,
+        self.controllers.get('forum').edit_post(self.caller, board=board, post=post, seek_text=search,
                                               replace_text=replace)
 
     def switch_move(self):
         if '/' not in self.lhs:
             raise ValueError("Usage: +bbpost/move <board>/<post>=<destination board>")
         board, post = self.lhs.split('/', 1)
-        evennia.GLOBAL_SCRIPTS.forum.move_post(self.caller, board=board, post=post, destination=self.rhs)
+        self.controllers.get('forum').move_post(self.caller, board=board, post=post, destination=self.rhs)
 
     def switch_delete(self):
         if '/' not in self.lhs:
             raise ValueError("Usage: +bbpost/move <board>/<post>")
         board, post = self.lhs.split('/', 1)
-        evennia.GLOBAL_SCRIPTS.forum.delete_post(self.caller, board=board, post=post)
+        self.controllers.get('forum').delete_post(self.caller, board=board, post=post)
 
 
 class CmdForumRead(ForumCommand):
@@ -244,45 +251,39 @@ class CmdForumRead(ForumCommand):
         return self.display_posts()
 
     def display_board(self):
-        board = evennia.GLOBAL_SCRIPTS.forum.find_board(self.caller, find_name=self.lhs)
-        threads = board.threads.order_by('db_order')
+        board = self.controllers.get('forum').find_board(self.caller, find_name=self.lhs)
+        posts = board.threads.order_by('db_order')
         message = list()
-        message.append(self.styled_header(f'Forum Threads on {board.prefix_order}: {board.key}'))
+        message.append(self.styled_header(f'Forum Posts on {board.prefix_order}: {board.key}'))
         message.append(self.styled_columns(f"{'ID':<10}Rd {'Title':<35}{'PostDate':<12}Author"))
-        message.append(self._blank_separator)
-        unread = board.unread_threads(self.account)
-        for thread in threads:
-            id = f"{thread.board.prefix_order}/{thread.order}"
-            rd = 'U ' if thread in unread else ''
-            subject = thread.key[:34].ljust(34)
-            post_date = self.account.localize_timestring(thread.date_created, time_format='%b %d %Y')
-            author = thread.entity
+        message.append(self.blank_separator)
+        unread = board.unread_posts(self.account)
+        for post in posts:
+            id = f"{post.board.prefix_order}/{post.order}"
+            rd = 'U ' if post in unread else ''
+            subject = post.key[:34].ljust(34)
+            post_date = self.account.localize_timestring(post.date_created, time_format='%b %d %Y')
+            author = post.entity
             message.append(f"{id:<10}{rd:<3}{subject:<35}{post_date:<12}{author}")
-        message.append(self._blank_footer)
+        message.append(self.blank_footer)
         self.msg('\n'.join(str(l) for l in message))
 
     def render_post(self, post):
         message = list()
-        message.append(self.styled_separator(f"|w{post.entity}|n posted on {post.date_created}:"))
-        message.append(post.body)
-        return message
-
-    def render_thread(self, thread):
-        message = list()
-        message.append(self.styled_header(f'Forum Thread - {thread.board.key}'))
-        msg = f"{thread.board.prefix_order}/{thread.order}"[:25].ljust(25)
+        message.append(self.styled_header(f'Forum Thread - {post.board.key}'))
+        msg = f"{post.board.prefix_order}/{post.order}"[:25].ljust(25)
         message.append(f"Message: {msg} Created       Author")
-        subj = thread.key[:34].ljust(34)
-        disp_time = self.account.localize_timestring(thread.date_created, time_format='%b %d %Y').ljust(13)
-        message.append(f"{subj} {disp_time} {thread.entity}")
-        for post in thread.posts.all().order_by('db_order'):
+        subj = post.key[:34].ljust(34)
+        disp_time = self.account.localize_timestring(post.date_created, time_format='%b %d %Y').ljust(13)
+        message.append(f"{subj} {disp_time} {post.entity}")
+        for post in post.posts.all().order_by('db_order'):
             message += self.render_post(post)
         message.append(self._blank_separator)
         return '\n'.join(str(l) for l in message)
 
     def display_posts(self):
         board, threads = self.lhs.split('/', 1)
-        board = evennia.GLOBAL_SCRIPTS.forum.find_board(self.caller, find_name=board)
+        board = self.controllers.get('forum').find_board(self.caller, find_name=board)
         threads = board.parse_threadnums(self.account, threads)
         for thread in threads:
             self.msg(self.render_thread(thread))
@@ -292,11 +293,11 @@ class CmdForumRead(ForumCommand):
         if not self.args:
             raise ValueError("Usage: +bbcatchup <board or all>")
         if self.args.lower() == 'all':
-            boards = evennia.GLOBAL_SCRIPTS.forum.visible_boards(self.caller, check_admin=True)
+            boards = self.controllers.get('forum').visible_boards(self.caller, check_admin=True)
         else:
             boards = list()
             for arg in self.lhslist:
-                found_board = evennia.GLOBAL_SCRIPTS.forum.find_board(self.caller, arg)
+                found_board = self.controllers.get('forum').find_board(self.caller, arg)
                 if found_board not in boards:
                     boards.append(found_board)
         for board in boards:
@@ -309,7 +310,7 @@ class CmdForumRead(ForumCommand):
             self.msg(f"Skipped {len(unread)} posts on Board '{board.prefix_order} - {board.key}'")
 
     def switch_scan(self):
-        boards = evennia.GLOBAL_SCRIPTS.forum.visible_boards(self.caller, check_admin=True)
+        boards = self.controllers.get('forum').visible_boards(self.caller, check_admin=True)
         unread = dict()
         show_boards = list()
         for board in boards:
@@ -335,7 +336,7 @@ class CmdForumRead(ForumCommand):
         return '\n'.join(str(l) for l in message)
 
     def switch_next(self):
-        boards = evennia.GLOBAL_SCRIPTS.forum.visible_boards(self.caller, check_admin=True)
+        boards = self.controllers.get('forum').visible_boards(self.caller, check_admin=True)
         for board in boards:
             b_unread = board.unread_posts(self.account).first()
             if b_unread:
@@ -348,4 +349,4 @@ class CmdForumRead(ForumCommand):
         self.switch_next()
 
 
-FORUM_COMMANDS = [CmdForumCategory, CmdForumAdmin, CmdForumThread, CmdForumRead]
+FORUM_COMMANDS = [CmdForumCategory, CmdForumAdmin, CmdForumPost, CmdForumRead]

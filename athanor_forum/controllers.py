@@ -53,6 +53,10 @@ class AthanorForumController(HasBoardOps, AthanorController):
     def find_category(self, user, category=None):
         if not category:
             raise ValueError("Must enter a category name!")
+        if isinstance(category, AthanorForumCategory):
+            return category
+        if isinstance(category, ForumCategoryBridge):
+            return category.db_script
         if not (candidates := self.visible_categories(session)):
             raise ValueError("No Board Categories visible!")
         if not (found := partial_match(category, candidates)):
@@ -114,10 +118,10 @@ class AthanorForumController(HasBoardOps, AthanorController):
     def find_board(self, user, find_name=None):
         if not find_name:
             raise ValueError("No board entered to find!")
-        if isinstance(find_name, ForumBoardBridge):
-            return find_name.db_script
         if isinstance(find_name, AthanorForumBoard):
             return find_name
+        if isinstance(find_name, ForumBoardBridge):
+            return find_name.db_script
         if not (boards := self.visible_boards(user)):
             raise ValueError("No applicable Forum Boards.")
         board_dict = {board.prefix_order.upper(): board for board in boards}
@@ -162,7 +166,7 @@ class AthanorForumController(HasBoardOps, AthanorController):
         if not board.parent_operator(enactor):
             raise ValueError("Permission denied!")
         old_order = board.order
-        order = board.change_order(order)
+        new_order = board.change_order(order)
         entities = {'enactor': enactor, 'target': board}
         fmsg.Order(entities, old_order=old_order).send()
 
@@ -176,9 +180,7 @@ class AthanorForumController(HasBoardOps, AthanorController):
             raise ValueError("Posts must have a subject!")
         if not text:
             raise ValueError("Posts must have a text body!")
-        if not date:
-            date = utcnow()
-        new_post = self.post_typeclass.create_forum_post(key=subject, text=text, owner=session.full_stub, board=board, date=date)
+        new_post = board.create_post(subject=subject, text=text, owner=enactor, date=date)
         if announce:
             entities = {'enactor': enactor, 'target': board, 'post': new_post}
             pass  # do something!
@@ -205,8 +207,10 @@ class AthanorForumController(HasBoardOps, AthanorController):
             raise ValueError("Permission denied.")
         post.edit_post(find=seek_text, replace=replace_text)
 
-    def config_category(self, character, board=None, value=None):
-        board = self.find_board(character, board)
+    def config_category(self, session, category, config_op, config_val):
+        category = self.find_category(session, category)
+        category.config(session, config_op, config_val)
 
-    def config_board(self):
-        pass
+    def config_board(self, session, board, config_op, config_val):
+        board = self.find_board(session, board)
+        board.config(session, config_op, config_val)

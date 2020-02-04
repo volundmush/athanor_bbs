@@ -24,6 +24,7 @@ class HasBoardOps(HasOps):
     def get_user(self, session):
         return session.get_puppet()
 
+
 class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
     # The Regex to use for Forum Category names.
     re_name = re.compile(r"^[a-zA-Z]{0,3}$")
@@ -31,7 +32,7 @@ class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
     # The regex to use for Forum Category abbreviations.
     re_abbr = re.compile(r"^[a-zA-Z]{0,3}$")
 
-    lockstring = "see:all();create:pperm(Admin);delete:pperm(Admin);control:pperm(Admin)"
+    lockstring = "moderate:oper(forum_category_moderate);operate:oper(forum_category_operate)"
     operate_operation = "forum_category_operate"
     moderate_operation = "forum_category_moderate"
     use_operation = "forum_category_use"
@@ -102,11 +103,11 @@ class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
 
 class AthanorForumBoard(HasBoardOps, AthanorOptionScript):
     re_name = re.compile(r"(?i)^([A-Z]|[0-9]|\.|-|')+( ([A-Z]|[0-9]|\.|-|')+)*$")
-    lockstring = "read:all();post:all();control:pperm(Admin)"
+    lockstring = "read:all();post:all();moderate:oper(forum_board_moderate);operate:oper(forum_board_operate)"
     operate_operation = "forum_board_operate"
     moderate_operation = "forum_board_moderate"
     use_operation = "forum_board_use"
-    examine_type = 'forum_category'
+    examine_type = 'forum_board'
     examine_caller_type = 'account'
 
     def setup_locks(self):
