@@ -11,36 +11,9 @@ class ForumCommand(AthanorCommand):
     """
     Class for the Board System commands.
     """
-    help_category = "Communications"
+    help_category = "Forum"
     system_name = "FORUM"
     locks = 'cmd:all()'
-
-    def switch_main_board_columns(self):
-        styling = self.caller.styler
-        return styling.styled_columns(f"{'ID':<6}{'Name':<31}{'Mem':<4}{'#Mess':>6}{'#Unrd':>6} Perm")
-
-    def display_board_row(self, account, board):
-        bri = board.bridge
-        if board.db.mandatory:
-            member = 'MND'
-        else:
-            member = 'No' if account in bri.ignore_list.all() else 'Yes'
-        return f"{board.prefix_order:<6}{board.key:<31}{member:<4} {bri.threads.count():>5} {board.unread_threads(account).count():>5} {str(board.locks)}"
-
-    def switch_main_read(self):
-        styling = self.caller.styler
-        boards = self.controllers.get('forum').visible_boards(self.caller, check_admin=True)
-        message = list()
-        message.append(self.styled_header('Forum Boards'))
-        message.append(self.switch_main_board_columns())
-        message.append(styling.blank_separator)
-        this_cat = None
-        for board in boards:
-            if this_cat != (this_cat := board.category):
-                message.append(self.styled_separator(this_cat.cname))
-            message.append(self.display_board_row(self.account, board))
-        message.append(styling.blank_footer)
-        self.msg('\n'.join(str(l) for l in message))
 
 
 class CmdForumCategory(ForumCommand):
@@ -69,42 +42,28 @@ class CmdForumCategory(ForumCommand):
     key = "@fcategory"
     aliases = ['+bbcat']
     locks = 'cmd:oper(forum_category_admin)'
-    switch_options = ('create', 'delete', 'rename', 'prefix', 'lock')
-
-    def display_category_row(self, category):
-        bri = category.forum_category_bridge
-        cabbr = ANSIString(bri.cabbr)
-        cname = ANSIString(bri.cname)
-        return f"{cabbr:<7}{cname:<27}{bri.boards.count():<7}{str(category.locks):<30}"
+    switch_options = ('create', 'delete', 'rename', 'prefix', 'lock', 'config')
 
     def switch_main(self):
-        cats = self.controllers.get('forum').visible_categories(self.caller)
-        message = list()
-        message.append(self.styled_header('Forum Categories'))
-        message.append(self.styled_columns(f"{'Prefix':<7}{'Name':<27}{'Boards':<7}{'Locks':<30}"))
-        message.append(self.blank_separator)
-        for cat in cats:
-            message.append(self.display_category_row(cat))
-        message.append(self.blank_footer)
-        self.msg('\n'.join(str(l) for l in message))
+        self.msg(self.controllers.get('forum').render_category_list(self.session))
 
     def switch_create(self):
-        self.controllers.get('forum').create_category(self.caller, self.lhs, self.rhs)
+        self.controllers.get('forum').create_category(self.session, self.lhs, self.rhs)
 
     def switch_delete(self):
-        self.controllers.get('forum').delete_category(self.caller, self.lhs, self.rhs)
+        self.controllers.get('forum').delete_category(self.session, self.lhs, self.rhs)
 
     def switch_rename(self):
-        self.controllers.get('forum').rename_category(self.caller, self.lhs, self.rhs)
+        self.controllers.get('forum').rename_category(self.session, self.lhs, self.rhs)
 
     def switch_prefix(self):
-        self.controllers.get('forum').prefix_category(self.caller, self.lhs, self.rhs)
+        self.controllers.get('forum').prefix_category(self.session, self.lhs, self.rhs)
 
     def switch_lock(self):
-        self.controllers.get('forum').lock_category(self.caller, self.lhs, self.rhs)
+        self.controllers.get('forum').lock_category(self.session, self.lhs, self.rhs)
 
     def switch_config(self):
-        self.controllers.get('forum').config_category(self.caller, self.lhs, self.rhs)
+        self.controllers.get('forum').config_category(self.session, self.lhs, self.rhs)
 
 
 class CmdForumAdmin(ForumCommand):
@@ -140,38 +99,38 @@ class CmdForumAdmin(ForumCommand):
     key = "@fboard"
     aliases = ['+bboard']
 
-    player_switches = ['create', 'delete', 'rename', 'order', 'lock', 'unlock', 'config', 'join', 'leave']
+    switch_options = ['create', 'delete', 'rename', 'order', 'lock', 'unlock', 'config', 'join', 'leave']
 
     def switch_main(self):
-        return self.switch_main_read()
+        self.msg(self.controllers.get('forum').render_board_list(self.session))
 
     def switch_create(self):
         if '/' not in self.rhs:
             raise ValueError("Usage: +bbadmin/create <category>=<board name>/<board order>")
         name, order = self.rhs.split('/', 1)
-        self.controllers.get('forum').create_board(self.caller, category=self.lhs, name=name, order=order)
+        self.controllers.get('forum').create_board(self.session, category=self.lhs, name=name, order=order)
 
     def switch_delete(self):
-        self.controllers.get('forum').delete_board(self.caller, name=self.lhs, verify=self.rhs)
+        self.controllers.get('forum').delete_board(self.session, name=self.lhs, verify=self.rhs)
 
     def switch_rename(self):
-        self.controllers.get('forum').rename_board(self.caller, name=self.lhs, new_name=self.rhs)
+        self.controllers.get('forum').rename_board(self.session, name=self.lhs, new_name=self.rhs)
 
     def switch_config(self):
-        self.controllers.get('forum').config_board(self.caller, name=self.lhs, new_name=self.rhs)
+        self.controllers.get('forum').config_board(self.session, name=self.lhs, new_name=self.rhs)
 
     def switch_order(self):
-        self.controllers.get('forum').order_board(self.caller, name=self.rhs, order=self.lhs)
+        self.controllers.get('forum').order_board(self.session, name=self.rhs, order=self.lhs)
 
     def switch_lock(self):
-        self.controllers.get('forum').lock_board(self.caller, name=self.rhs, lock=self.lhs)
+        self.controllers.get('forum').lock_board(self.session, name=self.rhs, lock=self.lhs)
 
     def switch_join(self):
-        board = self.controllers.get('forum').find_board(self.caller, self.args, visible_only=False)
+        board = self.controllers.get('forum').find_board(self.session, self.args, visible_only=False)
         board.ignore_list.remove(self.caller)
 
     def switch_leave(self):
-        board = self.controllers.get('forum').find_board(self.caller, self.args)
+        board = self.controllers.get('forum').find_board(self.session, self.args)
         if board.mandatory:
             raise ValueError("Cannot leave mandatory forum!")
         board.ignore_list.add(self.caller)
@@ -192,32 +151,31 @@ class CmdForumPost(ForumCommand):
     key = '@fthread'
     aliases = ['+bbpost']
     switch_options = ('rename', 'move', 'delete', 'edit')
+    lhs_delim = '/'
 
     def switch_main(self):
         if '/' not in self.lhs:
             raise ValueError("Usage: +bbpost <board>/<subject>=<post text>")
-        board, subject = self.lhs.split('/', 1)
-        self.controllers.get('forum').create_post(self.caller, board=board, subject=subject, text=self.rhs)
+        self.controllers.get('forum').create_post(self.caller, board=self.lhslist[0], subject=self.lhslist[1],
+                                                  text=self.rhs)
 
     def switch_rename(self):
         if '/' not in self.lhs or '^^^' not in self.rhs:
             raise ValueError("Usage: +bbpost/edit <board>/<post>=<search>^^^<replace>")
-        board, post = self.lhs.split('/', 1)
         search, replace = self.rhs.split('^^^', 1)
-        self.controllers.get('forum').edit_post(self.caller, board=board, post=post, seek_text=search,
-                                              replace_text=replace)
+        self.controllers.get('forum').edit_post(self.caller, board=self.lhslist[0], post=self.lhslist[1],
+                                                seek_text=search, replace_text=replace)
 
     def switch_move(self):
         if '/' not in self.lhs:
             raise ValueError("Usage: +bbpost/move <board>/<post>=<destination board>")
-        board, post = self.lhs.split('/', 1)
-        self.controllers.get('forum').move_post(self.caller, board=board, post=post, destination=self.rhs)
+        self.controllers.get('forum').move_post(self.caller, board=self.lhslist[0], post=self.lhslist[1],
+                                                destination=self.rhs)
 
     def switch_delete(self):
         if '/' not in self.lhs:
             raise ValueError("Usage: +bbpost/move <board>/<post>")
-        board, post = self.lhs.split('/', 1)
-        self.controllers.get('forum').delete_post(self.caller, board=board, post=post)
+        self.controllers.get('forum').delete_post(self.caller, board=self.lhslist[0], post=self.lhslist[1])
 
 
 class CmdForumRead(ForumCommand):
@@ -243,51 +201,11 @@ class CmdForumRead(ForumCommand):
 
     def switch_main(self):
         if not self.args:
-            return self.switch_main_read()
-        if not self.lhs:
-            return self.error("Usage: @fread <board>/<thread>")
-        if '/' not in self.lhs:
-            return self.display_board()
-        return self.display_posts()
-
-    def display_board(self):
-        board = self.controllers.get('forum').find_board(self.caller, find_name=self.lhs)
-        posts = board.threads.order_by('db_order')
-        message = list()
-        message.append(self.styled_header(f'Forum Posts on {board.prefix_order}: {board.key}'))
-        message.append(self.styled_columns(f"{'ID':<10}Rd {'Title':<35}{'PostDate':<12}Author"))
-        message.append(self.blank_separator)
-        unread = board.unread_posts(self.account)
-        for post in posts:
-            id = f"{post.board.prefix_order}/{post.order}"
-            rd = 'U ' if post in unread else ''
-            subject = post.key[:34].ljust(34)
-            post_date = self.account.localize_timestring(post.date_created, time_format='%b %d %Y')
-            author = post.entity
-            message.append(f"{id:<10}{rd:<3}{subject:<35}{post_date:<12}{author}")
-        message.append(self.blank_footer)
-        self.msg('\n'.join(str(l) for l in message))
-
-    def render_post(self, post):
-        message = list()
-        message.append(self.styled_header(f'Forum Thread - {post.board.key}'))
-        msg = f"{post.board.prefix_order}/{post.order}"[:25].ljust(25)
-        message.append(f"Message: {msg} Created       Author")
-        subj = post.key[:34].ljust(34)
-        disp_time = self.account.localize_timestring(post.date_created, time_format='%b %d %Y').ljust(13)
-        message.append(f"{subj} {disp_time} {post.entity}")
-        for post in post.posts.all().order_by('db_order'):
-            message += self.render_post(post)
-        message.append(self._blank_separator)
-        return '\n'.join(str(l) for l in message)
-
-    def display_posts(self):
-        board, threads = self.lhs.split('/', 1)
-        board = self.controllers.get('forum').find_board(self.caller, find_name=board)
-        threads = board.parse_threadnums(self.account, threads)
-        for thread in threads:
-            self.msg(self.render_thread(thread))
-            thread.update_read(self.account)
+            return self.msg(self.controllers.get('forum').render_board_list(self.session))
+        if '/' not in self.args:
+            return self.msg(self.controllers.get('forum').render_board(self.session, self.args))
+        board, posts = self.args.split('/', 1)
+        return self.msg(self.controllers.get('forum').display_posts(self.session, board, posts))
 
     def switch_catchup(self):
         if not self.args:

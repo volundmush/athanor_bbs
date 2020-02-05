@@ -4,6 +4,7 @@ from django.db.models import F, Q
 from evennia.locks.lockhandler import LockException
 from evennia.utils.validatorfuncs import lock as validate_lock
 from evennia.utils.ansi import ANSIString
+from evennia.utils.utils import lazy_property
 
 import athanor
 from athanor.utils.online import puppets as online_puppets
@@ -39,24 +40,35 @@ class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
     examine_type = 'forum_category'
     examine_caller_type = 'account'
 
+    def generate_substitutions(self, viewer):
+        return {'name': self.key,
+                'cname': self.bridge.cname,
+                'typename': 'Forum Category'}
+
     def parent_moderator(self, user):
-        return user.lock_check(f"oper({self.moderate_operation})") or self.parent_operator(user)
+        return user.check_lock(f"oper({self.moderate_operation})") or self.parent_operator(user)
 
     def parent_operator(self, user):
-        return user.lock_check(f"oper({self.operate_operation})")
+        return user.check_lock(f"oper({self.operate_operation})")
 
     def parent_user(self, user):
-        return user.lock_check(f"oper({self.use_operation})") or self.parent_moderator(user)
+        return user.check_lock(f"oper({self.use_operation})") or self.parent_moderator(user)
 
     @property
     def bridge(self):
         return self.forum_category_bridge
 
     @property
+    def cname(self):
+        return self.bridge.db_cname
+
+    @property
     def boards(self):
         return [board.db_script for board in self.bridge.boards.all().order_by('db_order')]
 
     def is_visible(self, user):
+        if self.is_user(user):
+            return True
         for board in self.boards:
             if board.is_user(user):
                 return True
@@ -110,13 +122,34 @@ class AthanorForumBoard(HasBoardOps, AthanorOptionScript):
     examine_type = 'forum_board'
     examine_caller_type = 'account'
 
+    @lazy_property
+    def ignore_list(self):
+        return self.get_or_create_attribute(key='ignore_list', default=set())
+
+    def generate_substitutions(self, viewer):
+        return {'name': self.key,
+                'cname': self.bridge.cname,
+                'typename': 'Forum Category'}
+
     def setup_locks(self):
         self.locks.add(self.lockstring)
 
     @property
     def bridge(self):
         return self.forum_board_bridge
-    
+
+    @property
+    def category(self):
+        return self.bridge.db_category.db_script
+
+    @property
+    def cname(self):
+        return self.bridge.db_cname
+
+    @property
+    def posts(self):
+        return self.bridge.posts
+
     @property
     def parent(self):
         return self.bridge.db_category.db_script
@@ -149,6 +182,24 @@ class AthanorForumBoard(HasBoardOps, AthanorOptionScript):
     def __str__(self):
         return self.key
 
+    @lazy_property
+    def next_post_id(self):
+        return self.get_or_create_attribute(key='next_post_id', default=1)
+
+    def create_post(self, account, character, subject, text, date=None):
+        if not date:
+            date = utcnow()
+        name = ANSIString(subject)
+        if '|' in name:
+            raise ValueError("Malformed ANSI in post subject!")
+        cname = name.raw()
+        next = self.next_post_id
+        new_post = self.posts.create(account=account, character=character, name=name.clean(), cname=cname, order=next,
+                                     body=text, date_created=date, date_modified=date)
+        new_post.update_read(account)
+        next += 1
+        return new_post
+
     @property
     def prefix_order(self):
         bridge = self.forum_board_bridge
@@ -164,7 +215,7 @@ class AthanorForumBoard(HasBoardOps, AthanorOptionScript):
     def character_leave(self, character):
         self.forum_board_bridge.ignore_list.add(character)
 
-    def parse_threadnums(self, account, check=None):
+    def parse_postnums(self, account, check=None):
         if not check:
             raise ValueError("No posts entered to check.")
         fullnums = []
@@ -180,8 +231,8 @@ class AthanorForumBoard(HasBoardOps, AthanorOptionScript):
             if re.match(r"^\d+$", arg):
                 fullnums.append(int(arg))
             if re.match(r"^U$", arg.upper()):
-                fullnums += self.unread_posts(account).values_list('db_order', flat=True)
-        posts = self.posts.filter(db_order__in=fullnums).order_by('db_order')
+                fullnums += self.unread_posts(account).values_list('order', flat=True)
+        posts = self.posts.filter(order__in=fullnums).order_by('order')
         if not posts:
             raise ValueError("posts not found!")
         return posts
@@ -197,8 +248,8 @@ class AthanorForumBoard(HasBoardOps, AthanorOptionScript):
             return False
 
     def unread_posts(self, account):
-        return self.forum_board_bridge.posts.exclude(read__account=account, db_date_modified__lte=F('read__date_read')).order_by(
-            'db_order')
+        return self.bridge.posts.exclude(read__account=account, date_modified__lte=F('read__date_read')).order_by(
+            'order')
 
     def display_permissions(self, looker=None):
         if not looker:

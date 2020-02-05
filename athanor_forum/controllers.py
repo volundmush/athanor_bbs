@@ -1,5 +1,6 @@
 from evennia.utils.logger import log_trace
 from evennia.utils.utils import class_from_module
+from evennia.utils.ansi import ANSIString
 
 from athanor.utils.text import partial_match
 from athanor.controllers.base import AthanorController
@@ -12,6 +13,9 @@ from athanor_forum import messages as fmsg
 
 class AthanorForumController(HasBoardOps, AthanorController):
     system_name = 'FORUM'
+    operate_operation = 'forum_category_operate'
+    use_operation = 'forum_category_use'
+    moderate_operation = 'forum_category_moderate'
 
     def do_load(self):
         from django.conf import settings
@@ -31,13 +35,16 @@ class AthanorForumController(HasBoardOps, AthanorController):
             self.board_typeclass = AthanorForumBoard
 
     def parent_operator(self, user):
-        return user.lock_check(f"oper({self.operate_operation})")
+        return user.check_lock(f"oper({self.operate_operation})")
 
     def parent_user(self, user):
-        return user.lock_check(f"oper({self.use_operation})") or self.parent_moderator(user)
+        return user.check_lock(f"oper({self.use_operation})") or self.parent_moderator(user)
+
+    def parent_moderator(self, user):
+        return user.check_lock(f"oper({self.moderate_operation})") or self.parent_operator(user)
 
     def categories(self):
-        return AthanorForumCategory.objects.filter_family().order_by('db_name')
+        return [cat.db_script for cat in ForumCategoryBridge.objects.all().order_by('db_name')]
 
     def visible_categories(self, user):
         return [cat for cat in self.categories() if cat.is_visible(user)]
@@ -57,7 +64,7 @@ class AthanorForumController(HasBoardOps, AthanorController):
             return category
         if isinstance(category, ForumCategoryBridge):
             return category.db_script
-        if not (candidates := self.visible_categories(session)):
+        if not (candidates := self.visible_categories(user)):
             raise ValueError("No Board Categories visible!")
         if not (found := partial_match(category, candidates)):
             raise ValueError(f"Category '{category}' not found!")
@@ -132,7 +139,7 @@ class AthanorForumController(HasBoardOps, AthanorController):
     def create_board(self, session, category, name=None, order=None):
         if not (enactor := self.get_user(session)):
             raise ValueError("Permission denied!")
-        category = self.find_category(session, category)
+        category = self.find_category(enactor, category)
         if not category.is_operator(enactor):
             raise ValueError("Permission denied!")
         typeclass = self.board_typeclass
@@ -180,7 +187,7 @@ class AthanorForumController(HasBoardOps, AthanorController):
             raise ValueError("Posts must have a subject!")
         if not text:
             raise ValueError("Posts must have a text body!")
-        new_post = board.create_post(subject=subject, text=text, owner=enactor, date=date)
+        new_post = board.create_post(session.account, enactor, subject, text, date=date)
         if announce:
             entities = {'enactor': enactor, 'target': board, 'post': new_post}
             pass  # do something!
@@ -214,3 +221,103 @@ class AthanorForumController(HasBoardOps, AthanorController):
     def config_board(self, session, board, config_op, config_val):
         board = self.find_board(session, board)
         board.config(session, config_op, config_val)
+
+    def render_category_row(self, category):
+        bri = category.bridge
+        cabbr = ANSIString(bri.cabbr)
+        cname = ANSIString(bri.cname)
+        return f"{cabbr:<7}{cname:<27}{bri.boards.count():<7}{str(category.locks):<30}"
+
+    def render_category_list(self, session):
+        if not (enactor := self.get_user(session)):
+            raise ValueError("Permission denied!")
+        cats = self.visible_categories(enactor)
+        styling = enactor.styler
+        message = list()
+        message.append(styling.styled_header('Forum Categories'))
+        message.append(styling.styled_columns(f"{'Prefix':<7}{'Name':<27}{'Boards':<7}{'Locks':<30}"))
+        message.append(styling.blank_separator)
+        for cat in cats:
+            message.append(self.render_category_row(cat))
+        message.append(styling.blank_footer)
+        return '\n'.join(str(l) for l in message)
+
+    def render_board_columns(self, user):
+        styling = user.styler
+        return styling.styled_columns(f"{'ID':<6}{'Name':<31}{'Mem':<4}{'#Mess':>6}{'#Unrd':>6} Perm")
+
+    def render_board_row(self, enactor, account, board):
+        bri = board.bridge
+        if board.db.mandatory:
+            member = 'MND'
+        else:
+            member = 'No' if account in board.ignore_list else 'Yes'
+        count = bri.posts.count()
+        unread = board.unread_posts(account).count()
+        perms = board.display_permissions(enactor)
+        return f"{board.prefix_order:<6}{board.key:<31}{member:<4} {count:>5} {unread:>5} {perms}"
+
+    def render_board_list(self, session):
+        if not (enactor := self.get_user(session)):
+            raise ValueError("Permission denied!")
+        boards = self.visible_boards(enactor)
+        styling = enactor.styler
+        message = list()
+        message.append(styling.styled_header('Forum Boards'))
+        message.append(self.render_board_columns(enactor))
+        message.append(styling.blank_separator)
+        this_cat = None
+        for board in boards:
+            if this_cat != (this_cat := board.category):
+                message.append(styling.styled_separator(this_cat.cname))
+            message.append(self.render_board_row(enactor, session.account, board))
+        message.append(styling.blank_footer)
+        return '\n'.join(str(l) for l in message)
+
+    def render_board(self, session, board):
+        if not (enactor := self.get_user(session)):
+            raise ValueError("Permission denied!")
+        if not (board := self.find_board(enactor, board)):
+            raise ValueError("Cannot find Board!")
+        posts = board.posts.order_by('order')
+        styling = enactor.styler
+        message = list()
+        message.append(styling.styled_header(f'Forum Posts on {board.prefix_order}: {board.key}'))
+        message.append(styling.styled_columns(f"{'ID':<10}Rd {'Title':<35}{'PostDate':<12}Author"))
+        message.append(styling.blank_separator)
+        unread = set(board.unread_posts(session.account))
+        for post in posts:
+            id = f"{post.board.db_script.prefix_order}/{post.order}"
+            rd = 'U ' if post in unread else ''
+            subject = post.cname[:34].ljust(34)
+            post_date = styling.localize_timestring(post.date_created, time_format='%b %d %Y')
+            author = post.character if post.character else 'N/A'
+            message.append(f"{id:<10}{rd:<3}{subject:<35}{post_date:<12}{author}")
+        message.append(styling.blank_footer)
+        return '\n'.join(str(l) for l in message)
+
+    def render_post(self, session, enactor, styling, post):
+        message = list()
+        message.append(styling.styled_header(f'Forum Post - {post.board.db_script.cname}'))
+        msg = f"{post.board.db_script.prefix_order}/{post.order}"[:25].ljust(25)
+        message.append(f"Message: {msg} Created       Author")
+        subj = post.cname[:34].ljust(34)
+        disp_time = styling.localize_timestring(post.date_created, time_format='%b %d %Y').ljust(13)
+        message.append(f"{subj} {disp_time} {post.character if post.character else 'N/A'}")
+        message.append(styling.blank_separator)
+        message.append(post.body)
+        message.append(styling.blank_separator)
+        return '\n'.join(str(l) for l in message)
+
+    def display_posts(self, session, board, posts):
+        if not (enactor := self.get_user(session)):
+            raise ValueError("Permission denied!")
+        if not (board := self.find_board(enactor, board)):
+            raise ValueError("Cannot find Board!")
+        posts = board.parse_postnums(enactor, posts)
+        message = list()
+        styling = enactor.styler
+        for post in posts:
+            message.append(self.render_post(session, enactor, styling, post))
+            post.update_read(session.account)
+        return '\n'.join(str(l) for l in message)

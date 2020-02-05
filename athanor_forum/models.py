@@ -41,7 +41,7 @@ class ForumBoardBridge(SharedMemoryModel):
 
 class ForumPost(models.Model):
     account = models.ForeignKey('accounts.AccountDB', related_name='+', null=True, on_delete=models.SET_NULL)
-    object = models.ForeignKey('objects.ObjectDB', related_name='+', null=True, on_delete=models.SET_NULL)
+    character = models.ForeignKey('objects.ObjectDB', related_name='+', null=True, on_delete=models.SET_NULL)
     date_created = models.DateTimeField(null=False)
     board = models.ForeignKey(ForumBoardBridge, related_name='posts', on_delete=models.CASCADE)
     name = models.CharField(max_length=255, blank=False, null=False)
@@ -90,8 +90,8 @@ class ForumPost(models.Model):
 
 class ForumPostRead(models.Model):
     account = models.ForeignKey('accounts.AccountDB', related_name='forum_read', on_delete=models.CASCADE)
-    thread = models.ForeignKey(ForumPost, related_name='read', on_delete=models.CASCADE)
+    post = models.ForeignKey(ForumPost, related_name='read', on_delete=models.CASCADE)
     date_read = models.DateTimeField(null=True)
 
     class Meta:
-        unique_together = (('account', 'thread'),)
+        unique_together = (('account', 'post'),)

@@ -8,3 +8,4 @@ def init_settings(settings):
     settings.CONTROLLERS['forum'] = {
         'class': 'athanor_forum.controllers.AthanorForumController'
     }
+    settings.CMDSETS["CHARACTER"].append("athanor_forum.cmdsets.AthanorCharacterForumCmdSet")
