@@ -13,9 +13,6 @@ from athanor_forum import messages as fmsg
 
 class AthanorForumController(HasBoardOps, AthanorController):
     system_name = 'FORUM'
-    operate_operation = 'forum_category_operate'
-    use_operation = 'forum_category_use'
-    moderate_operation = 'forum_category_moderate'
 
     def do_load(self):
         from django.conf import settings
@@ -34,14 +31,8 @@ class AthanorForumController(HasBoardOps, AthanorController):
             log_trace()
             self.board_typeclass = AthanorForumBoard
 
-    def parent_operator(self, user):
-        return user.check_lock(f"oper({self.operate_operation})")
-
-    def parent_user(self, user):
-        return user.check_lock(f"oper({self.use_operation})") or self.parent_moderator(user)
-
-    def parent_moderator(self, user):
-        return user.check_lock(f"oper({self.moderate_operation})") or self.parent_operator(user)
+    def parent_position(self, user, position):
+        return user.lock_check(f"pperm(Admin)")
 
     def categories(self):
         return [cat.db_script for cat in ForumCategoryBridge.objects.all().order_by('db_name')]
@@ -49,9 +40,16 @@ class AthanorForumController(HasBoardOps, AthanorController):
     def visible_categories(self, user):
         return [cat for cat in self.categories() if cat.is_visible(user)]
 
-    def create_category(self, session, name, abbr=''):
-        if not (enactor := self.get_user(session)) and self.parent_operator(enactor):
+    def _parent_operator(self, session):
+        if not (enactor := self.get_enactor(session)) and self.parent_position(enactor, 'operator'):
             raise ValueError("Permission denied!")
+        return enactor
+
+    def get_enactor(self, session):
+        return session.get_puppet()
+
+    def create_category(self, session, name, abbr=''):
+        enactor = self._parent_operator(session)
         new_category = self.category_typeclass.create_forum_category(key=name, abbr=abbr)
         entities = {'enactor': enactor, 'target': new_category}
         fmsg.Create(entities).send()
@@ -70,28 +68,23 @@ class AthanorForumController(HasBoardOps, AthanorController):
             raise ValueError(f"Category '{category}' not found!")
         return found
 
-    def rename_category(self, session, category=None, new_name=None):
-        if not (enactor := self.get_user(session)) and self.parent_operator(enactor):
-            raise ValueError("Permission denied!")
+    def _rename_category(self, session, category, new, oper, msg):
+        enactor = self._parent_operator(session)
         category = self.find_category(enactor, category)
-        old_name = category.key
-        old_abbr = category.abbr
-        new_name = category.rename(new_name)
+        old_name = category.fullname
+        operation = getattr(category, oper)
+        new_name = operation(new)
         entities = {'enactor': enactor, 'target': category}
-        fmsg.Rename(entities, old_name=old_name, old_abbr=old_abbr).send()
+        msg(entities, old_name=old_name).send()
+
+    def rename_category(self, session, category=None, new_name=None):
+        return self._rename_category(session, category, new_name, 'rename', fmsg.Rename)
 
     def prefix_category(self, session, category=None, new_prefix=None):
-        if not (enactor := self.get_user(session)) and self.parent_operator(enactor):
-            raise ValueError("Permission denied!")
-        category = self.find_category(session, category)
-        old_abbr = category.abbr
-        new_prefix = category.change_prefix(new_prefix)
-        entities = {'enactor': enactor, 'target': category}
-        fmsg.Rename(entities, old_name=old_name, old_abbr=old_abbr).send()
+        return self._rename_category(session, category, new_prefix, 'change_prefix', fmsg.Rename)
 
     def delete_category(self, session, category, abbr=None):
-        if not (enactor := self.get_user(session)) and self.parent_operator(enactor):
-            raise ValueError("Permission denied!")
+        enactor = self._parent_operator(session)
         category_found = self.find_category(session, category)
         if not category == category_found.key:
             raise ValueError("Names must be exact for verification.")
@@ -104,14 +97,12 @@ class AthanorForumController(HasBoardOps, AthanorController):
         category_found.delete()
 
     def lock_category(self, session, category, new_locks):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
+        enactor = self._enactor(session)
         category = self.find_category(enactor, category)
         return category.lock(session, new_locks)
 
-    def lock_board(self, session, category, board, new_locks):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
+    def lock_board(self, session, board, new_locks):
+        enactor = self._enactor(session)
         board = self.find_board(enactor, board)
         return board.lock(session, new_locks)
 
@@ -120,7 +111,12 @@ class AthanorForumController(HasBoardOps, AthanorController):
                                                                   'forum_board_bridge__db_order')
 
     def visible_boards(self, user):
-        return [board for board in self.boards() if board.is_user(user)]
+        return [board for board in self.boards() if board.is_position(user, 'reader')]
+
+    def _enactor(self, session):
+        if not (enactor := self.get_enactor(session)):
+            raise ValueError("Permission denied!")
+        return enactor
 
     def find_board(self, user, find_name=None):
         if not find_name:
@@ -137,10 +133,9 @@ class AthanorForumController(HasBoardOps, AthanorController):
         return found
 
     def create_board(self, session, category, name=None, order=None):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
+        enactor = self._enactor(session)
         category = self.find_category(enactor, category)
-        if not category.is_operator(enactor):
+        if not category.is_position(enactor, 'operator'):
             raise ValueError("Permission denied!")
         typeclass = self.board_typeclass
         new_board = typeclass.create_forum_board(key=name, order=order, category=category)
@@ -149,17 +144,15 @@ class AthanorForumController(HasBoardOps, AthanorController):
         return new_board
 
     def delete_board(self, session, board, verify):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
+        enactor = self._enactor(session)
         board = self.find_board(enactor, board)
-        if not board.parent_operator(enactor):
+        if not board.parent_position(enactor, 'operator'):
             raise ValueError("Permission denied!")
 
     def rename_board(self, session, name=None, new_name=None):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
+        enactor = self._enactor(session)
         board = self.find_board(enactor, name)
-        if not board.parent_operator(enactor):
+        if not board.parent_position(enactor, 'operator'):
             raise ValueError("Permission denied!")
         old_name = board.key
         board.change_key(new_name)
@@ -167,10 +160,9 @@ class AthanorForumController(HasBoardOps, AthanorController):
         fmsg.Rename(entities, old_name=old_name).send()
 
     def order_board(self, session, name=None, order=None):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
+        enactor = self._enactor(session)
         board = self.find_board(enactor, name)
-        if not board.parent_operator(enactor):
+        if not board.parent_position(enactor, 'operator'):
             raise ValueError("Permission denied!")
         old_order = board.order
         new_order = board.change_order(order)
@@ -178,8 +170,7 @@ class AthanorForumController(HasBoardOps, AthanorController):
         fmsg.Order(entities, old_order=old_order).send()
 
     def create_post(self, session, board=None, subject=None, text=None, announce=True, date=None):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
+        enactor = self._enactor(session)
         board = self.find_board(enactor, board)
         if not board.check_permission(enactor, mode='post'):
             raise ValueError("Permission denied!")
@@ -194,20 +185,17 @@ class AthanorForumController(HasBoardOps, AthanorController):
         return new_post
 
     def rename_post(self, session, board=None, post=None, new_name=None):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
+        enactor = self._enactor(session)
         board = self.find_board(enactor, board)
         post = board.find_post(enactor, post)
 
     def delete_post(self, session, board=None, post=None, name_confirm=None):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
+        enactor = self._enactor(session)
         board = self.find_board(enactor, board)
         post = board.find_post(enactor, post)
 
     def edit_post(self, session, board=None, post=None, seek_text=None, replace_text=None):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
+        enactor = self._enactor(session)
         board = self.find_board(enactor, board)
         post = board.find_post(enactor, post)
         if not post.can_edit(enactor):
@@ -229,8 +217,7 @@ class AthanorForumController(HasBoardOps, AthanorController):
         return f"{cabbr:<7}{cname:<27}{bri.boards.count():<7}{str(category.locks):<30}"
 
     def render_category_list(self, session):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
+        enactor = self._enactor(session)
         cats = self.visible_categories(enactor)
         styling = enactor.styler
         message = list()
@@ -258,8 +245,7 @@ class AthanorForumController(HasBoardOps, AthanorController):
         return f"{board.prefix_order:<6}{board.key:<31}{member:<4} {count:>5} {unread:>5} {perms}"
 
     def render_board_list(self, session):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
+        enactor = self._enactor(session)
         boards = self.visible_boards(enactor)
         styling = enactor.styler
         message = list()
@@ -275,10 +261,8 @@ class AthanorForumController(HasBoardOps, AthanorController):
         return '\n'.join(str(l) for l in message)
 
     def render_board(self, session, board):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
-        if not (board := self.find_board(enactor, board)):
-            raise ValueError("Cannot find Board!")
+        enactor = self._enactor(session)
+        board = self.find_board(enactor, board)
         posts = board.posts.order_by('order')
         styling = enactor.styler
         message = list()
@@ -310,10 +294,8 @@ class AthanorForumController(HasBoardOps, AthanorController):
         return '\n'.join(str(l) for l in message)
 
     def display_posts(self, session, board, posts):
-        if not (enactor := self.get_user(session)):
-            raise ValueError("Permission denied!")
-        if not (board := self.find_board(enactor, board)):
-            raise ValueError("Cannot find Board!")
+        enactor = self._enactor(session)
+        board = self.find_board(enactor, board)
         posts = board.parse_postnums(enactor, posts)
         message = list()
         styling = enactor.styler

@@ -20,6 +20,12 @@ class ForumCategoryBridge(SharedMemoryModel):
     def __str__(self):
         return str(self.db_name)
 
+    def save_name(self):
+        self.save(update_fields=['db_name', 'db_iname', 'db_cname'])
+
+    def save_abbr(self):
+        self.save(update_fields=['db_abbr', 'db_iabbr', 'db_cabbr'])
+
 
 class ForumBoardBridge(SharedMemoryModel):
     db_script = models.OneToOneField('scripts.ScriptDB', related_name='forum_board_bridge', primary_key=True,
@@ -29,6 +35,9 @@ class ForumBoardBridge(SharedMemoryModel):
     db_iname = models.CharField(max_length=255, blank=False, null=False)
     db_cname = models.CharField(max_length=255, blank=False, null=False)
     db_order = models.PositiveIntegerField(default=0)
+
+    def save_name(self):
+        self.save(update_fields=['db_name', 'db_iname', 'db_cname'])
 
     def __str__(self):
         return str(self.db_name)
@@ -86,6 +95,15 @@ class ForumPost(models.Model):
         acc_read, created = self.read.get_or_create(account=account)
         acc_read.date_read = utcnow()
         acc_read.save()
+
+    def fullname(self):
+        return f"Forum Post: ({self.board.db_script.prefix_order}/{self.order}): {self.name}"
+
+    def generate_substitutions(self, viewer):
+        return {'name': self.name,
+                'cname': self.cname,
+                'typename': 'Forum Post',
+                'fullname': self.fullname}
 
 
 class ForumPostRead(models.Model):

@@ -22,37 +22,47 @@ class HasBoardOps(HasOps):
     ban_msg = fmsg.Ban
     unban_msg = fmsg.Unban
 
-    def get_user(self, session):
+    def get_enactor(self, session):
         return session.get_puppet()
+
+    def parent_position(self, user, position):
+        return self.parent.is_position(user, position)
 
 
 class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
     # The Regex to use for Forum Category names.
-    re_name = re.compile(r"^[a-zA-Z]{0,3}$")
+    re_name = re.compile(r"(?i)^([A-Z]|[0-9]|\.|-|')+( ([A-Z]|[0-9]|\.|-|')+)*$")
 
     # The regex to use for Forum Category abbreviations.
     re_abbr = re.compile(r"^[a-zA-Z]{0,3}$")
 
-    lockstring = "moderate:oper(forum_category_moderate);operate:oper(forum_category_operate)"
-    operate_operation = "forum_category_operate"
-    moderate_operation = "forum_category_moderate"
-    use_operation = "forum_category_use"
+    lockstring = "moderator:false();operator:false()"
     examine_type = 'forum_category'
     examine_caller_type = 'account'
+    access_hierarchy = ['moderator', 'operator']
+    access_breakdown = {
+        'moderator': {
+            'lock': 'pperm(Moderator)'
+        },
+        'operator': {
+            'lock': 'pperm(Admin)'
+        }
+    }
+
+    @property
+    def parent(self):
+        return athanor.CONTROLLER_MANAGER.get('forum')
+
+    @property
+    def fullname(self):
+        prefix = f"({self.abbr}) " if self.abbr else ''
+        return f'Forum Category: {prefix}{self.key}'
 
     def generate_substitutions(self, viewer):
         return {'name': self.key,
                 'cname': self.bridge.cname,
-                'typename': 'Forum Category'}
-
-    def parent_moderator(self, user):
-        return user.check_lock(f"oper({self.moderate_operation})") or self.parent_operator(user)
-
-    def parent_operator(self, user):
-        return user.check_lock(f"oper({self.operate_operation})")
-
-    def parent_user(self, user):
-        return user.check_lock(f"oper({self.use_operation})") or self.parent_moderator(user)
+                'typename': 'Forum Category',
+                'fullname': self.fullname}
 
     @property
     def bridge(self):
@@ -63,14 +73,18 @@ class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
         return self.bridge.db_cname
 
     @property
+    def abbr(self):
+        return self.bridge.db_abbr
+
+    @property
     def boards(self):
         return [board.db_script for board in self.bridge.boards.all().order_by('db_order')]
 
     def is_visible(self, user):
-        if self.is_user(user):
+        if self.is_position(user, 'moderator'):
             return True
         for board in self.boards:
-            if board.is_user(user):
+            if board.is_position(user, 'reader'):
                 return True
         return False
 
@@ -92,12 +106,14 @@ class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
         abbr = ANSIString(abbr)
         clean_key = str(key.clean())
         clean_abbr = str(abbr.clean())
-        if '|' in clean_key:
-            raise ValueError("Malformed ANSI in ForumCategory Name.")
+        if '|' in clean_key or '|' in clean_abbr:
+            raise ValueError("Malformed ANSI in ForumCategory Name or Prefix.")
+        if not cls.re_name.match(clean_key):
+            raise ValueError("Forum Categories must have simpler names than that!")
         if not cls.re_abbr.match(clean_abbr):
-            raise ValueError("Abbreviations must be between 0-3 alphabetical characters.")
+            raise ValueError("Prefixes must be between 0-3 alphabetical characters.")
         if ForumCategoryBridge.objects.filter(Q(db_iname=clean_key.lower()) | Q(db_iabbr=clean_abbr.lower())).count():
-            raise ValueError("Name or Abbreviation conflicts with another ForumCategory.")
+            raise ValueError("Name or Prefix conflicts with another ForumCategory.")
         script, errors = cls.create(clean_key, persistent=True, **kwargs)
         if script:
             script.create_bridge(key.raw(), clean_key, abbr.raw(), clean_abbr)
@@ -107,29 +123,79 @@ class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
         return script
 
     def rename(self, key):
-        pass
+        key = ANSIString(key)
+        clean_key = str(key.clean())
+        iclean_key = clean_key.lower()
+        if '|' in clean_key:
+            raise ValueError("Malformed ANSI in ForumCategory Name.")
+        if not self.re_name.match(clean_key):
+            raise ValueError("Forum Categories must have simpler names than that!")
+        if ForumCategoryBridge.objects.filter(db_iname=iclean_key).count():
+            raise ValueError("Name conflicts with another ForumCategory.")
+        bridge = self.bridge
+        bridge.db_name = clean_key
+        self.key = clean_key
+        bridge.db_iname = iclean_key
+        bridge.db_cname = key
+        bridge.save_name()
+        return key
 
     def change_prefix(self, new_prefix):
-        pass
+        abbr = ANSIString(new_prefix)
+        clean_abbr = str(abbr.clean())
+        iclean_abbr = clean_abbr.lower()
+        if '|' in clean_abbr:
+            raise ValueError("Malformed ANSI in ForumCategory Prefix.")
+        if not self.re_abbr.match(clean_abbr):
+            raise ValueError("Prefixes must be between 0-3 alphabetical characters.")
+        if ForumCategoryBridge.objects.filter(db_iabbr=iclean_abbr.lower()).count():
+            raise ValueError("Name or Prefix conflicts with another ForumCategory.")
+        bridge = self.bridge
+        bridge.db_abbr = clean_abbr
+        self.key = clean_abbr
+        bridge.db_iabbr = iclean_abbr
+        bridge.db_cabbr = abbr
+        bridge.save_abbr()
+        return abbr
 
 
 class AthanorForumBoard(HasBoardOps, AthanorOptionScript):
     re_name = re.compile(r"(?i)^([A-Z]|[0-9]|\.|-|')+( ([A-Z]|[0-9]|\.|-|')+)*$")
-    lockstring = "read:all();post:all();moderate:oper(forum_board_moderate);operate:oper(forum_board_operate)"
-    operate_operation = "forum_board_operate"
-    moderate_operation = "forum_board_moderate"
-    use_operation = "forum_board_use"
+    lockstring = "reader:all();poster:all();moderator:false();operator:false()"
     examine_type = 'forum_board'
     examine_caller_type = 'account'
+    lock_options = ['reader', 'poster', 'moderator', 'operator']
+    access_hierarchy = ['reader', 'poster', 'moderator', 'operator']
+    access_breakdown = {
+        'reader': {
+        },
+        'poster': {
+        },
+        'moderator': {
+            "lock": 'pperm(Moderator)'
+        },
+        "operator": {
+            'lock': 'pperm(Admin)'
+        }
+    }
+    operations = {
+        'ban': 'moderator',
+        'lock': 'operator',
+        'config': 'operator'
+    }
 
     @lazy_property
     def ignore_list(self):
         return self.get_or_create_attribute(key='ignore_list', default=set())
 
+    def fullname(self):
+        return f"Forum Board: ({self.prefix_order}): {self.key}"
+
     def generate_substitutions(self, viewer):
         return {'name': self.key,
                 'cname': self.bridge.cname,
-                'typename': 'Forum Category'}
+                'typename': 'Forum Board',
+                'fullname': self.fullname}
 
     def setup_locks(self):
         self.locks.add(self.lockstring)
