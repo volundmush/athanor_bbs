@@ -60,7 +60,7 @@ class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
 
     def generate_substitutions(self, viewer):
         return {'name': self.key,
-                'cname': self.bridge.cname,
+                'cname': self.cname,
                 'typename': 'Forum Category',
                 'fullname': self.fullname}
 
@@ -70,7 +70,7 @@ class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
 
     @property
     def cname(self):
-        return self.bridge.db_cname
+        return ANSIString(self.bridge.db_cname)
 
     @property
     def abbr(self):
@@ -102,7 +102,11 @@ class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
 
     @classmethod
     def create_forum_category(cls, key, abbr, **kwargs):
+        if '|' in key and not key.endswith('|n'):
+            key += '|n'
         key = ANSIString(key)
+        if '|' in abbr and not abbr.endswith('|n'):
+            abbr += '|n'
         abbr = ANSIString(abbr)
         clean_key = str(key.clean())
         clean_abbr = str(abbr.clean())
@@ -123,6 +127,8 @@ class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
         return script
 
     def rename(self, key):
+        if '|' in key and not key.endswith('|n'):
+            key += '|n'
         key = ANSIString(key)
         clean_key = str(key.clean())
         iclean_key = clean_key.lower()
@@ -141,6 +147,8 @@ class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
         return key
 
     def change_prefix(self, new_prefix):
+        if '|' in new_prefix and not new_prefix.endswith('|n'):
+            new_prefix += '|n'
         abbr = ANSIString(new_prefix)
         clean_abbr = str(abbr.clean())
         iclean_abbr = clean_abbr.lower()
@@ -193,7 +201,7 @@ class AthanorForumBoard(HasBoardOps, AthanorOptionScript):
 
     def generate_substitutions(self, viewer):
         return {'name': self.key,
-                'cname': self.bridge.cname,
+                'cname': self.cname,
                 'typename': 'Forum Board',
                 'fullname': self.fullname}
 
@@ -210,7 +218,7 @@ class AthanorForumBoard(HasBoardOps, AthanorOptionScript):
 
     @property
     def cname(self):
-        return self.bridge.db_cname
+        return ANSIString(self.bridge.db_cname)
 
     @property
     def posts(self):
@@ -228,6 +236,8 @@ class AthanorForumBoard(HasBoardOps, AthanorOptionScript):
 
     @classmethod
     def create_forum_board(cls, category, key, order, **kwargs):
+        if '|' in key and not key.endswith('|n'):
+            key += '|n'
         key = ANSIString(key)
         clean_key = str(key.clean())
         if '|' in clean_key:
