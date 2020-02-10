@@ -26,7 +26,7 @@ class HasBoardOps(HasOps):
         return session.get_puppet()
 
     def parent_position(self, user, position):
-        return self.parent.is_position(user, position)
+        return self.parent.check_position(user, position)
 
 
 class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
@@ -81,10 +81,10 @@ class AthanorForumCategory(HasBoardOps, AthanorOptionScript):
         return [board.db_script for board in self.bridge.boards.all().order_by('db_order')]
 
     def is_visible(self, user):
-        if self.is_position(user, 'moderator'):
+        if self.check_position(user, 'moderator'):
             return True
         for board in self.boards:
-            if board.is_position(user, 'reader'):
+            if board.check_position(user, 'reader'):
                 return True
         return False
 

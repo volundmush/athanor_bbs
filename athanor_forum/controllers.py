@@ -111,7 +111,7 @@ class AthanorForumController(HasBoardOps, AthanorController):
                                                                   'forum_board_bridge__db_order')
 
     def visible_boards(self, user):
-        return [board for board in self.boards() if board.is_position(user, 'reader')]
+        return [board for board in self.boards() if board.check_position(user, 'reader')]
 
     def _enactor(self, session):
         if not (enactor := self.get_enactor(session)):
@@ -135,7 +135,7 @@ class AthanorForumController(HasBoardOps, AthanorController):
     def create_board(self, session, category, name=None, order=None):
         enactor = self._enactor(session)
         category = self.find_category(enactor, category)
-        if not category.is_position(enactor, 'operator'):
+        if not category.check_position(enactor, 'operator'):
             raise ValueError("Permission denied!")
         typeclass = self.board_typeclass
         new_board = typeclass.create_forum_board(key=name, order=order, category=category)
