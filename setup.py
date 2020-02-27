@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 os.chdir(os.path.dirname(os.path.realpath(__file__)))
 
-VERSION_PATH = os.path.join("athanor_forum", "VERSION.txt")
+VERSION_PATH = os.path.join("athanor_bbs", "VERSION.txt")
 OS_WINDOWS = os.name == "nt"
 
 
@@ -53,23 +53,23 @@ def package_data():
     Make sure we get everything.
     """
     file_set = []
-    for root, dirs, files in os.walk("athanor_forum"):
+    for root, dirs, files in os.walk("athanor_bbs"):
         for f in files:
             if ".git" in f.split(os.path.normpath(os.path.join(root, f))):
                 # Prevent the repo from being added.
                 continue
-            file_name = os.path.relpath(os.path.join(root, f), "athanor_forum")
+            file_name = os.path.relpath(os.path.join(root, f), "athanor_bbs")
             file_set.append(file_name)
     return file_set
 
 
 # setup the package
 setup(
-    name="athanor_forum",
+    name="athanor_bbs",
     version=get_version(),
     author="Volund",
     maintainer="Volund",
-    url="https://github.com/volundmush/athanor_forum",
+    url="https://github.com/volundmush/athanor_bbs",
     description="A library that builds on Evennia to provide popular and useful features for text-based multiplayer games (MUDs, MU*).",
     license="BSD",
     long_description="""
