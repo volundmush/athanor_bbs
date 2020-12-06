@@ -1,11 +1,11 @@
-from collections import defaultdict
+PLUGIN_NAME = "athanor_bbs"
+
+LOAD_PRIORITY = 0
 
 
 def init_settings(settings):
-    settings.FORUM_CATEGORY_TYPECLASS = "athanor_bbs.gamedb.AthanorBBSCategory"
-    settings.FORUM_BOARD_TYPECLASS = "athanor_bbs.gamedb.AthanorBBSBoard"
-    settings.INSTALLED_APPS.append("athanor_bbs")
-    settings.CONTROLLERS['bbs'] = {
-        'class': 'athanor_bbs.controllers.AthanorBBSController'
-    }
-    settings.CMDSETS["CHARACTER"].append("athanor_bbs.cmdsets.AthanorCharacterBBSCmdSet")
+    settings.BASE_BOARD_TYPECLASS = "athanor_bbs.boards.boards.DefaultBoard"
+    settings.INSTALLED_APPS.append("athanor_bbs.boards")
+    settings.CONTROLLERS['board'] = 'athanor_bbs.boards.controller.AthanorBoardController'
+    settings.CMDSETS["ACCOUNT"].append("athanor_bbs.boards.cmdsets.AthanorAccountBoardCmdSet")
+    settings.CMDSETS["CHARACTER"].append("athanor_bbs.boards.cmdsets.AthanorCharacterBoardCmdSet")
