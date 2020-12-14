@@ -2,6 +2,7 @@ from django.db import models
 from django.conf import settings
 from athanor.utils.time import utcnow
 from evennia.typeclasses.models import TypedObject, SharedMemoryModel
+from athanor.access.models import AbstractACLEntry
 
 
 class BoardDB(TypedObject):
@@ -26,6 +27,13 @@ class BoardDB(TypedObject):
     @property
     def alias(self):
         return f"{self.db_identity.db_abbr_global}{self.db_order}"
+
+
+class BoardACL(AbstractACLEntry):
+    resource = models.ForeignKey('boards.BoardDB', related_name='acl_entries', on_delete=models.CASCADE)
+
+    class Meta:
+        unique_together = (('resource', 'identity', 'mode'),)
 
 
 class BoardTopic(SharedMemoryModel):
@@ -86,7 +94,7 @@ class BoardTopic(SharedMemoryModel):
 
 
 class BoardPost(SharedMemoryModel):
-    db_topic = models.ForeignKey('bbs.BoardDB', related_name='topics', on_delete=models.CASCADE)
+    db_topic = models.ForeignKey('boards.BoardTopic', related_name='topics', on_delete=models.CASCADE)
     db_author = models.ForeignKey('identities.IdentityDB', null=True, related_name='bbs_posts',
                                   on_delete=models.PROTECT)
     db_name = models.CharField(max_length=255, blank=False, null=False)
@@ -109,4 +117,4 @@ class TopicRead(models.Model):
     date_read = models.DateTimeField(null=True)
 
     class Meta:
-        unique_together = (('identity', 'post'),)
+        unique_together = (('identity', 'topic'),)

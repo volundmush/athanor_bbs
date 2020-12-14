@@ -1,7 +1,6 @@
 from evennia.typeclasses.models import TypeclassBase
 from evennia.typeclasses.managers import TypeclassManager
 
-from athanor.models import BBSPostDB
 from athanor.utils.time import utcnow
 
 

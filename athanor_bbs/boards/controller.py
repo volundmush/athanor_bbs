@@ -1,165 +1,26 @@
-from evennia.utils.logger import log_trace
-from evennia.utils.utils import class_from_module
 from evennia.utils.ansi import ANSIString
 
-from athanor.utils.text import partial_match
-from athanor.controllers.base import AthanorController
-from athanor.utils.time import utcnow
+from athanor.utils.controllers import AthanorController, AthanorControllerBackend
 
-from athanor_bbs.models import BBSCategoryBridge, BBSBoardBridge, BBSPost, BBSPostRead
-from athanor_bbs.gamedb import AthanorBBSCategory, AthanorBBSBoard, HasBoardOps
-from athanor_bbs import messages as fmsg
+from athanor_bbs.boards.models import BoardTopic, BoardPost, BoardACL, TopicRead
+from athanor_bbs.boards.boards import DefaultBoard
+from athanor_bbs.boards import messages as fmsg
 
 
-class AthanorBBSController(HasBoardOps, AthanorController):
+class AthanorBoardController(AthanorController):
     system_name = 'FORUM'
 
-    def do_load(self):
-        from django.conf import settings
+    def __init__(self, key, manager, backend):
+        super().__init__(key, manager, backend)
+        self.load()
 
-        try:
-            category_typeclass = settings.FORUM_CATEGORY_TYPECLASS
-            self.category_typeclass = class_from_module(category_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
-        except Exception:
-            log_trace()
-            self.category_typeclass = AthanorBBSCategory
+    def create_board(self, session, owner, name, order: int=0):
+        pass
 
-        try:
-            board_typeclass = settings.FORUM_BOARD_TYPECLASS
-            self.board_typeclass = class_from_module(board_typeclass, defaultpaths=settings.TYPECLASS_PATHS)
-        except Exception:
-            log_trace()
-            self.board_typeclass = AthanorBBSBoard
+    def rename_board(self, session, board, new_name):
+        pass
 
-    def parent_position(self, user, position):
-        return user.lock_check(f"pperm(Admin)")
-
-    def categories(self):
-        return [cat.db_script for cat in BBSCategoryBridge.objects.all().order_by('db_name')]
-
-    def visible_categories(self, user):
-        return [cat for cat in self.categories() if cat.is_visible(user)]
-
-    def _parent_operator(self, session):
-        if not (enactor := self.get_enactor(session)) and self.parent_position(enactor, 'operator'):
-            raise ValueError("Permission denied!")
-        return enactor
-
-    def get_enactor(self, session):
-        return session.get_puppet()
-
-    def create_category(self, session, name, abbr=''):
-        enactor = self._parent_operator(session)
-        new_category = self.category_typeclass.create_bbs_category(key=name, abbr=abbr)
-        entities = {'enactor': enactor, 'target': new_category}
-        fmsg.Create(entities).send()
-        return new_category
-
-    def find_category(self, user, category=None):
-        if not category:
-            raise ValueError("Must enter a category name!")
-        if isinstance(category, AthanorBBSCategory):
-            return category
-        if isinstance(category, BBSCategoryBridge):
-            return category.db_script
-        if not (candidates := self.visible_categories(user)):
-            raise ValueError("No Board Categories visible!")
-        if not (found := partial_match(category, candidates)):
-            raise ValueError(f"Category '{category}' not found!")
-        return found
-
-    def _rename_category(self, session, category, new, oper, msg):
-        enactor = self._parent_operator(session)
-        category = self.find_category(enactor, category)
-        old_name = category.fullname
-        operation = getattr(category, oper)
-        new_name = operation(new)
-        entities = {'enactor': enactor, 'target': category}
-        msg(entities, old_name=old_name).send()
-
-    def rename_category(self, session, category=None, new_name=None):
-        return self._rename_category(session, category, new_name, 'rename', fmsg.Rename)
-
-    def prefix_category(self, session, category=None, new_prefix=None):
-        return self._rename_category(session, category, new_prefix, 'change_prefix', fmsg.Rename)
-
-    def delete_category(self, session, category, abbr=None):
-        enactor = self._parent_operator(session)
-        category_found = self.find_category(session, category)
-        if not category == category_found.key:
-            raise ValueError("Names must be exact for verification.")
-        if not abbr:
-            raise ValueError("Must provide prefix for verification!")
-        if not abbr == category_found.abbr:
-            raise ValueError("Must provide exact prefix for verification!")
-        entities = {'enactor': enactor, 'target': category_found}
-        fmsg.Delete(entities).send()
-        category_found.delete()
-
-    def lock_category(self, session, category, new_locks):
-        enactor = self._enactor(session)
-        category = self.find_category(enactor, category)
-        return category.lock(session, new_locks)
-
-    def lock_board(self, session, board, new_locks):
-        enactor = self._enactor(session)
-        board = self.find_board(enactor, board)
-        return board.lock(session, new_locks)
-
-    def boards(self):
-        return AthanorBBSBoard.objects.filter_family().order_by('bbs_board_bridge__db_category__db_name',
-                                                                  'bbs_board_bridge__db_order')
-
-    def visible_boards(self, user):
-        return [board for board in self.boards() if board.check_position(user, 'reader')]
-
-    def _enactor(self, session):
-        if not (enactor := self.get_enactor(session)):
-            raise ValueError("Permission denied!")
-        return enactor
-
-    def find_board(self, user, find_name=None):
-        if not find_name:
-            raise ValueError("No board entered to find!")
-        if isinstance(find_name, AthanorBBSBoard):
-            return find_name
-        if isinstance(find_name, BBSBoardBridge):
-            return find_name.db_script
-        if not (boards := self.visible_boards(user)):
-            raise ValueError("No applicable BBS Boards.")
-        board_dict = {board.prefix_order.upper(): board for board in boards}
-        if not (found := board_dict.get(find_name.upper(), None)):
-            raise ValueError("Board '%s' not found!" % find_name)
-        return found
-
-    def create_board(self, session, category, name=None, order=None):
-        enactor = self._enactor(session)
-        category = self.find_category(enactor, category)
-        if not category.check_position(enactor, 'operator'):
-            raise ValueError("Permission denied!")
-        typeclass = self.board_typeclass
-        new_board = typeclass.create_bbs_board(key=name, order=order, category=category)
-        entities = {'enactor': enactor, 'target': new_board}
-        fmsg.Create(entities).send()
-        return new_board
-
-    def delete_board(self, session, board, verify):
-        enactor = self._enactor(session)
-        board = self.find_board(enactor, board)
-        if not board.parent_position(enactor, 'operator'):
-            raise ValueError("Permission denied!")
-
-    def rename_board(self, session, name=None, new_name=None):
-        enactor = self._enactor(session)
-        board = self.find_board(enactor, name)
-        if not board.parent_position(enactor, 'operator'):
-            raise ValueError("Permission denied!")
-        old_name = board.key
-        board.change_key(new_name)
-        entities = {'enactor': enactor, 'target': board}
-        fmsg.Rename(entities, old_name=old_name).send()
-
-    def order_board(self, session, name=None, order=None):
+    def reorder_board(self, session, board, new_order):
         enactor = self._enactor(session)
         board = self.find_board(enactor, name)
         if not board.parent_position(enactor, 'operator'):
@@ -169,7 +30,39 @@ class AthanorBBSController(HasBoardOps, AthanorController):
         entities = {'enactor': enactor, 'target': board}
         fmsg.Order(entities, old_order=old_order).send()
 
-    def create_post(self, session, board=None, subject=None, text=None, announce=True, date=None):
+    def lock_board(self, session, board, new_locks):
+        enactor = self._enactor(session)
+        board = self.find_board(enactor, board)
+        return board.lock(session, new_locks)
+
+    def all(self):
+        return self.backend.all()
+
+    def count(self):
+        return self.backend.count()
+
+    def visible_boards(self, user):
+        return [board for board in self.all() if board.check_acl(user, 'read')]
+
+    def find_board(self, user, find_name=None):
+        if not find_name:
+            raise ValueError("No board entered to find!")
+        if isinstance(find_name, DefaultBoard):
+            return find_name
+        if not (boards := self.visible_boards(user)):
+            raise ValueError("No applicable BBS Boards.")
+        board_dict = {board.prefix_order.upper(): board for board in boards}
+        if not (found := board_dict.get(find_name.upper(), None)):
+            raise ValueError("Board '%s' not found!" % find_name)
+        return found
+
+    def delete_board(self, session, board, verify):
+        enactor = self._enactor(session)
+        board = self.find_board(enactor, board)
+        if not board.parent_position(enactor, 'operator'):
+            raise ValueError("Permission denied!")
+
+    def create_post(self, session, board, topic, subject=None, text=None, announce=True, date=None):
         enactor = self._enactor(session)
         board = self.find_board(enactor, board)
         if not board.check_permission(enactor, mode='post'):
@@ -201,14 +94,6 @@ class AthanorBBSController(HasBoardOps, AthanorController):
         if not post.can_edit(enactor):
             raise ValueError("Permission denied.")
         post.edit_post(find=seek_text, replace=replace_text)
-
-    def config_category(self, session, category, config_op, config_val):
-        category = self.find_category(session, category)
-        category.config(session, config_op, config_val)
-
-    def config_board(self, session, board, config_op, config_val):
-        board = self.find_board(session, board)
-        board.config(session, config_op, config_val)
 
     def render_category_row(self, category):
         bri = category.bridge
@@ -303,3 +188,23 @@ class AthanorBBSController(HasBoardOps, AthanorController):
             message.append(self.render_post(session, enactor, styling, post))
             post.update_read(session.account)
         return '\n'.join(str(l) for l in message)
+
+
+class AthanorBoardControllerBackend(AthanorControllerBackend):
+    typeclass_defs = [
+        ('board_typeclass', 'BASE_BOARD_TYPECLASS', DefaultBoard)
+    ]
+
+    def __init__(self, frontend):
+        super().__init__(frontend)
+        self.board_typeclass = None
+        self.load()
+
+    def all(self):
+        return DefaultBoard.objects.all_family()
+
+    def count(self):
+        return DefaultBoard.objects.all_family().count()
+
+    def create_board(self, owner, name, order: int=0) -> DefaultBoard:
+        pass

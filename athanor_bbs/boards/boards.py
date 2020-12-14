@@ -5,22 +5,21 @@ from django.db.models import F, Q
 
 from evennia.locks.lockhandler import LockException
 from evennia.utils.validatorfuncs import lock as validate_lock
-from evennia.utils.ansi import ANSIString
 from evennia.utils.utils import lazy_property, class_from_module
 from evennia.typeclasses.models import TypeclassBase
 from evennia.typeclasses.managers import TypeclassManager
 
-import athanor
 from athanor.utils.online import puppets as online_puppets
 from athanor.utils.time import utcnow
 from athanor.utils.text import clean_and_ansi
 
-from athanor.models import BBSBoardDB, BBSPostDB, BBSPostRead
-from athanor.bbs import messages as fmsg
-from athanor.bbs.handlers import BoardAcccessHandler
+from athanor_bbs.boards.models import BoardDB
+from athanor_bbs.boards import messages as fmsg
+from athanor_bbs.boards.handlers import BoardAcccessHandler
+from athanor.access.acl import ACLMixin
 
 
-class DefaultBoard(BBSBoardDB, metaclass=TypeclassBase):
+class DefaultBoard(ACLMixin, BoardDB, metaclass=TypeclassBase):
     post_class = class_from_module(settings.BASE_BBS_POST_TYPECLASS)
     objects = TypeclassManager()
 
