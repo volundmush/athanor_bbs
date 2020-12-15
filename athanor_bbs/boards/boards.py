@@ -15,19 +15,12 @@ from athanor.utils.text import clean_and_ansi
 
 from athanor_bbs.boards.models import BoardDB
 from athanor_bbs.boards import messages as fmsg
-from athanor_bbs.boards.handlers import BoardAcccessHandler
-from athanor.access.acl import ACLMixin
 
 
-class DefaultBoard(ACLMixin, BoardDB, metaclass=TypeclassBase):
-    post_class = class_from_module(settings.BASE_BBS_POST_TYPECLASS)
+class DefaultBoard(BoardDB, metaclass=TypeclassBase):
     objects = TypeclassManager()
 
     re_name = re.compile(r"(?i)^([A-Z]|[0-9]|\.|-|')+( ([A-Z]|[0-9]|\.|-|')+)*$")
-
-    @lazy_property
-    def acl(self):
-        return BoardAcccessHandler(self)
 
     def at_first_save(self):
         pass
